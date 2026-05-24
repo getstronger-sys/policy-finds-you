@@ -680,31 +680,37 @@ function App() {
                   <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
                 </div>
                 <p className="policy-alarm">{getPolicyAlarmText(policy.applyStart, policy.applyEnd)}</p>
-                <p>
-                  <strong>适用对象：</strong>
-                  {policy.targetGroup}
+                <div className="policy-meta">
+                  <span>
+                    <strong>适用对象：</strong>
+                    {policy.targetGroup}
+                  </span>
                   <span className="scenario-tag">{policy.scenario}</span>
-                </p>
-                <p>
-                  <strong>可获得：</strong>
-                  {policy.benefit}
-                </p>
-                <p>
-                  <strong>匹配原因：</strong>
-                  {policy.reason}
-                </p>
-                <p>
-                  <strong>申报窗口：</strong>
-                  {policy.applyStart} 至 {policy.applyEnd}
-                </p>
-                <p>
-                  <strong>当前状态：</strong>
-                  {getPolicyStatus(policy.applyStart, policy.applyEnd)}
-                </p>
-                <p>
-                  <strong>下一步：</strong>
-                  {policy.nextStep}
-                </p>
+                </div>
+                <div className="policy-grid">
+                  <div className="policy-item">
+                    <p className="policy-label">可获得</p>
+                    <p className="policy-value">{policy.benefit}</p>
+                  </div>
+                  <div className="policy-item">
+                    <p className="policy-label">当前状态</p>
+                    <p className="policy-value">{getPolicyStatus(policy.applyStart, policy.applyEnd)}</p>
+                  </div>
+                  <div className="policy-item">
+                    <p className="policy-label">申报窗口</p>
+                    <p className="policy-value">
+                      {policy.applyStart} 至 {policy.applyEnd}
+                    </p>
+                  </div>
+                  <div className="policy-item">
+                    <p className="policy-label">下一步</p>
+                    <p className="policy-value">{policy.nextStep}</p>
+                  </div>
+                </div>
+                <div className="policy-reason">
+                  <p className="policy-label">匹配原因</p>
+                  <p className="policy-value">{policy.reason}</p>
+                </div>
                 <div className="policy-actions">
                   <button type="button" onClick={() => openPolicyInterpretation(policy)}>
                     查看政策解读
@@ -712,17 +718,14 @@ function App() {
                   <button type="button" className="ghost" onClick={() => openPolicyQrExport(policy)}>
                     导出二维码
                   </button>
-                </div>
-                {policy.sourceUrl && (
-                  <p>
-                    <strong>政策来源：</strong>
-                    <a href={policy.sourceUrl} target="_blank" rel="noreferrer">
-                      查看原文
+                  {policy.sourceUrl && (
+                    <a href={policy.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
+                      政策原文
                     </a>
-                    {typeof policy.confidence === 'number' && (
-                      <span className="confidence-tag">置信度 {(policy.confidence * 100).toFixed(0)}%</span>
-                    )}
-                  </p>
+                  )}
+                </div>
+                {typeof policy.confidence === 'number' && (
+                  <p className="confidence-tag">模型置信度 {(policy.confidence * 100).toFixed(0)}%</p>
                 )}
               </article>
             ))}
