@@ -748,7 +748,12 @@ function App() {
           </p>
           <div className="unlock-banner">{unlockHintText}</div>
           <div className="ai-toolbar">
-            <button type="button" onClick={runAiMatch} disabled={aiLoading}>
+            <button
+              type="button"
+              onClick={runAiMatch}
+              disabled={aiLoading}
+              className={aiLoading ? 'is-loading' : ''}
+            >
               {aiLoading ? 'AI 匹配中...' : '使用 DeepSeek 智能匹配'}
             </button>
             {aiSourceCount !== null && <span>已基于 {aiSourceCount} 条本地政策知识匹配</span>}
@@ -756,8 +761,12 @@ function App() {
           </div>
           {aiError && <p className="empty-tip">{aiError}</p>}
           <div className="result-list">
-            {displayPolicies.map((policy) => (
-              <article key={policy.name} className="result-card">
+            {displayPolicies.map((policy, index) => (
+              <article
+                key={policy.name}
+                className="result-card"
+                style={{ animationDelay: `${index * 60}ms` }}
+              >
                 <div className="result-head">
                   <h3>{policy.name}</h3>
                   <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
@@ -795,11 +804,21 @@ function App() {
                   <p className="policy-value">{policy.reason}</p>
                 </div>
                 <div className="policy-actions">
-                  <button type="button" onClick={() => openPolicyInterpretation(policy)}>
-                    查看政策解读
+                  <button
+                    type="button"
+                    onClick={() => openPolicyInterpretation(policy)}
+                    disabled={interpretLoading && selectedPolicy?.name === policy.name}
+                    className={interpretLoading && selectedPolicy?.name === policy.name ? 'is-loading' : ''}
+                  >
+                    {interpretLoading && selectedPolicy?.name === policy.name ? '解读生成中...' : '查看政策解读'}
                   </button>
-                  <button type="button" className="ghost" onClick={() => openPolicyQrExport(policy)}>
-                    导出二维码
+                  <button
+                    type="button"
+                    className={`ghost ${qrLoading && qrPolicy?.name === policy.name ? 'is-loading' : ''}`}
+                    onClick={() => openPolicyQrExport(policy)}
+                    disabled={qrLoading && qrPolicy?.name === policy.name}
+                  >
+                    {qrLoading && qrPolicy?.name === policy.name ? '二维码生成中...' : '导出二维码'}
                   </button>
                   {policy.sourceUrl && (
                     <a href={policy.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
