@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://policy-finds-you.onrender.com/sitemap.xml
