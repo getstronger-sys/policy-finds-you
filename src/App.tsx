@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
 import * as echarts from 'echarts'
+import QRCode from 'qrcode'
 import './App.css'
 
 type Identity = 'citizen' | 'company'
@@ -212,6 +213,10 @@ function App() {
   const [policyInterpretation, setPolicyInterpretation] = useState<PolicyInterpretation | null>(null)
   const [interpretLoading, setInterpretLoading] = useState(false)
   const [interpretError, setInterpretError] = useState('')
+  const [qrPolicy, setQrPolicy] = useState<PolicyCard | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState('')
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrError, setQrError] = useState('')
 
   useEffect(() => {
     const loadMap = async () => {
@@ -377,6 +382,38 @@ function App() {
       setInterpretError(error instanceof Error ? error.message : '解读请求失败')
     } finally {
       setInterpretLoading(false)
+    }
+  }
+
+  const buildPolicyShareText = (policy: PolicyCard) => {
+    const sourceText = policy.sourceUrl ? `政策原文：${policy.sourceUrl}` : '政策原文：请在“政策找你”平台内查看'
+    return [
+      `【政策权益分享】${policy.name}`,
+      `该权益面向：${policy.targetGroup}。`,
+      `政策背景：该权益属于“${policy.scenario}”场景，主要为符合条件的对象提供${policy.benefit}。`,
+      `适配说明：系统判断其匹配级别为“${policy.matchLevel}”，原因是：${policy.reason}`,
+      `政策窗口：${policy.applyStart} 至 ${policy.applyEnd}（状态：${getPolicyStatus(policy.applyStart, policy.applyEnd)}）`,
+      `办理建议：${policy.nextStep}`,
+      sourceText,
+    ].join('\n')
+  }
+
+  const openPolicyQrExport = async (policy: PolicyCard) => {
+    setQrPolicy(policy)
+    setQrDataUrl('')
+    setQrError('')
+    setQrLoading(true)
+    try {
+      const shareText = buildPolicyShareText(policy)
+      const dataUrl = await QRCode.toDataURL(shareText, {
+        width: 320,
+        margin: 2,
+      })
+      setQrDataUrl(dataUrl)
+    } catch (error) {
+      setQrError(error instanceof Error ? error.message : '二维码生成失败')
+    } finally {
+      setQrLoading(false)
     }
   }
 
@@ -672,6 +709,9 @@ function App() {
                   <button type="button" onClick={() => openPolicyInterpretation(policy)}>
                     查看政策解读
                   </button>
+                  <button type="button" className="ghost" onClick={() => openPolicyQrExport(policy)}>
+                    导出二维码
+                  </button>
                 </div>
                 {policy.sourceUrl && (
                   <p>
@@ -763,6 +803,38 @@ function App() {
           <p className="interpret-placeholder">点击政策卡片里的“查看政策解读”后，这里会显示通俗解读。</p>
         )}
       </aside>
+      <section className={`share-modal ${qrPolicy ? 'open' : ''}`}>
+        <div className="share-panel">
+          <div className="interpret-header">
+            <h3>权益二维码分享</h3>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setQrPolicy(null)
+                setQrDataUrl('')
+                setQrError('')
+              }}
+            >
+              关闭
+            </button>
+          </div>
+          {qrPolicy && (
+            <div className="share-content">
+              <p className="interpret-policy-name">{qrPolicy.name}</p>
+              <p>二维码内容已转为第三人称描述，适合直接分享给家人或朋友。</p>
+              {qrLoading && <p>二维码生成中...</p>}
+              {qrError && <p className="empty-tip">{qrError}</p>}
+              {!qrLoading && !qrError && qrDataUrl && (
+                <>
+                  <img src={qrDataUrl} alt={`${qrPolicy.name} 分享二维码`} className="qr-image" />
+                  <p className="share-tip">扫码后可查看该权益说明文本（含背景、条件与办理建议）。</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
     </main>
   )
 }

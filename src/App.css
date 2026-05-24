@@ -455,6 +455,9 @@ button.ghost {
 
 .policy-actions {
   margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .policy-actions button {
@@ -588,6 +591,44 @@ button.ghost {
 .interpret-placeholder {
   margin: 14px;
   color: #7f6248;
+}
+
+.share-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  display: none;
+  place-items: center;
+  z-index: 35;
+}
+
+.share-modal.open {
+  display: grid;
+}
+
+.share-panel {
+  width: min(460px, 92vw);
+  background: #fffdf9;
+  border: 1px solid #e4cfb8;
+  box-shadow: 0 18px 28px -20px rgba(36, 18, 8, 0.75);
+}
+
+.share-content {
+  padding: 12px 14px 16px;
+}
+
+.qr-image {
+  width: min(320px, 90%);
+  display: block;
+  margin: 10px auto 8px;
+  border: 1px solid #e7d8ca;
+  background: #fff;
+}
+
+.share-tip {
+  font-size: 12px;
+  color: #7f6144;
+  text-align: center;
 }
 
 @keyframes pageFadeIn {
