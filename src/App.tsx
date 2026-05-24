@@ -35,13 +35,6 @@ interface UserProfile {
   freeText: string
 }
 
-interface HealthStatus {
-  ok: boolean
-  hasApiKey: boolean
-  version?: string
-  policyCount?: number
-}
-
 const cityMap: Record<string, string[]> = {
   北京市: ['北京市'],
   上海市: ['上海市'],
@@ -178,8 +171,6 @@ function App() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiSourceCount, setAiSourceCount] = useState<number | null>(null)
-  const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null)
-  const [healthError, setHealthError] = useState('')
 
   useEffect(() => {
     const loadMap = async () => {
@@ -189,36 +180,6 @@ function App() {
       setMapReady(true)
     }
     void loadMap()
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const apiBase = API_BASE_URL ? `${API_BASE_URL}/api/health` : '/api/health'
-
-    const fetchHealth = async () => {
-      try {
-        const response = await fetch(apiBase)
-        if (!response.ok) {
-          throw new Error(`Health check failed: ${response.status}`)
-        }
-        const json = await response.json()
-        if (!cancelled) {
-          setHealthStatus(json)
-          setHealthError('')
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setHealthError(error instanceof Error ? error.message : 'health check error')
-        }
-      }
-    }
-
-    void fetchHealth()
-    const timer = setInterval(fetchHealth, 30_000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
   }, [])
 
   const cityOptions = cityMap[selectedProvince] ?? [selectedProvince || '请选择省份']
@@ -656,16 +617,6 @@ function App() {
           </div>
         </section>
       )}
-      <aside className="status-widget" aria-live="polite">
-        <p className="status-title">系统状态</p>
-        <p>
-          <span className={`status-dot ${healthStatus?.ok && !healthError ? 'ok' : 'down'}`}></span>
-          {healthStatus?.ok && !healthError ? '服务在线' : '服务异常'}
-        </p>
-        <p>政策库：{typeof healthStatus?.policyCount === 'number' ? `${healthStatus.policyCount} 条` : '--'}</p>
-        <p>API Key：{healthStatus?.hasApiKey ? '已配置' : '未配置'}</p>
-        <p>版本：{healthStatus?.version ?? 'dev'}</p>
-      </aside>
     </main>
   )
 }
