@@ -530,25 +530,36 @@ function App() {
 
       {!session ? (
         <section className="card login-card">
-          <h2>欢迎进入政策找你</h2>
-          <p className="hint">
-            这是独立登录页：支持快捷登录和游客模式。登录后会自动记住你的登录状态、地图选址与画像信息，下次打开可直接继续。
-          </p>
-          <label className="login-name-field">
-            微信昵称（可选）
-            <input
-              value={nicknameInput}
-              onChange={(event) => setNicknameInput(event.target.value)}
-              placeholder="不填则默认显示“微信用户”"
-            />
-          </label>
-          <div className="login-actions">
-            <button type="button" onClick={() => handleQuickLogin('wechat')}>
-              微信快捷登录（演示）
-            </button>
-            <button type="button" className="ghost" onClick={() => handleQuickLogin('guest')}>
-              游客直接进入
-            </button>
+          <div className="login-hero">
+            <h2>欢迎进入政策找你</h2>
+            <p className="hint">
+              智能匹配个人与企业可享权益，一次登录即可持续记录进度，减少重复填写。
+            </p>
+            <div className="login-feature-list">
+              <span>自动记住画像信息</span>
+              <span>支持政策解读与分享</span>
+              <span>可随时游客进入</span>
+            </div>
+          </div>
+          <div className="login-panel">
+            <p className="login-panel-title">快捷进入</p>
+            <label className="login-name-field">
+              微信昵称（可选）
+              <input
+                value={nicknameInput}
+                onChange={(event) => setNicknameInput(event.target.value)}
+                placeholder="不填则默认显示“微信用户”"
+              />
+            </label>
+            <div className="login-actions">
+              <button type="button" onClick={() => handleQuickLogin('wechat')}>
+                微信快捷登录（演示）
+              </button>
+              <button type="button" className="ghost" onClick={() => handleQuickLogin('guest')}>
+                游客直接进入
+              </button>
+            </div>
+            <p className="login-footnote">提示：当前为演示登录，不收集手机号和密码。</p>
           </div>
         </section>
       ) : (

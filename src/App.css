@@ -328,8 +328,49 @@ button.ghost {
 }
 
 .login-card {
-  max-width: 560px;
+  max-width: 760px;
   margin: 18px auto 0;
+  border-color: #e4cdb4;
+}
+
+.login-hero {
+  position: relative;
+  z-index: 1;
+}
+
+.login-card h2 {
+  font-size: 40px;
+  line-height: 1.15;
+}
+
+.login-feature-list {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.login-feature-list span {
+  padding: 5px 10px;
+  border: 1px solid #e8d4be;
+  background: #fff8ef;
+  color: #805334;
+  font-size: 13px;
+}
+
+.login-panel {
+  margin-top: 16px;
+  background: #fffcf7;
+  border: 1px solid #ecd7c2;
+  padding: 14px;
+  box-shadow: 0 12px 20px -18px rgba(98, 49, 18, 0.55);
+}
+
+.login-panel-title {
+  margin: 0;
+  font-size: 14px;
+  color: #7c4b2a;
+  font-weight: 700;
 }
 
 .login-actions {
@@ -345,7 +386,13 @@ button.ghost {
 
 .login-name-field {
   margin-top: 12px;
-  max-width: 360px;
+  max-width: 420px;
+}
+
+.login-footnote {
+  margin: 10px 0 0;
+  color: #8d6a4f;
+  font-size: 12px;
 }
 
 .full-row {
@@ -798,6 +845,10 @@ button.ghost {
 
   .policy-grid {
     grid-template-columns: 1fr;
+  }
+
+  .login-card h2 {
+    font-size: 34px;
   }
 
   .interpret-panel {
