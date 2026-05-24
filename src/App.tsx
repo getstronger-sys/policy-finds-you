@@ -6,7 +6,10 @@ import './App.css'
 
 type Identity = 'citizen' | 'company'
 type Step = 'map' | 'profile' | 'result'
+type AuthMode = 'wechat' | 'guest'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? ''
+const SESSION_STORAGE_KEY = 'policy-finds-you.session'
+const DRAFT_STORAGE_KEY = 'policy-finds-you.draft'
 
 interface PolicyCard {
   name: string
@@ -44,20 +47,17 @@ interface PolicyInterpretation {
   riskTips: string[]
 }
 
-const cityMap: Record<string, string[]> = {
-  北京市: ['北京市'],
-  上海市: ['上海市'],
-  江苏省: ['南京市', '苏州市', '无锡市', '常州市'],
-  浙江省: ['杭州市', '宁波市', '温州市', '嘉兴市'],
-  广东省: ['广州市', '深圳市', '佛山市', '东莞市'],
+interface UserSession {
+  mode: AuthMode
+  displayName: string
+  savedAt: string
 }
 
-const districtMap: Record<string, string[]> = {
-  北京市: ['朝阳区', '海淀区', '昌平区'],
-  上海市: ['浦东新区', '徐汇区', '闵行区'],
-  苏州市: ['工业园区', '姑苏区', '吴中区'],
-  杭州市: ['西湖区', '滨江区', '余杭区'],
-  深圳市: ['南山区', '福田区', '龙岗区'],
+interface AppDraft {
+  step: Step
+  selectedProvince: string
+  selectedScenario: string
+  profile: UserProfile
 }
 
 const basePolicies: PolicyCard[] = [
@@ -187,11 +187,12 @@ function getPolicyAlarmText(applyStart: string, applyEnd: string) {
 }
 
 function App() {
+  const [session, setSession] = useState<UserSession | null>(null)
+  const [nicknameInput, setNicknameInput] = useState('')
+  const [isHydrated, setIsHydrated] = useState(false)
   const [step, setStep] = useState<Step>('map')
   const [mapReady, setMapReady] = useState(false)
   const [selectedProvince, setSelectedProvince] = useState('')
-  const [selectedCity, setSelectedCity] = useState('')
-  const [selectedDistrict, setSelectedDistrict] = useState('')
   const [profile, setProfile] = useState<UserProfile>({
     identity: 'citizen',
     age: '',
@@ -228,8 +229,61 @@ function App() {
     void loadMap()
   }, [])
 
-  const cityOptions = cityMap[selectedProvince] ?? [selectedProvince || '请选择省份']
-  const districtOptions = districtMap[selectedCity] ?? ['请选择城市']
+  useEffect(() => {
+    try {
+      const rawSession = localStorage.getItem(SESSION_STORAGE_KEY)
+      if (rawSession) {
+        const parsedSession = JSON.parse(rawSession) as UserSession
+        if (parsedSession?.displayName) {
+          setSession(parsedSession)
+        }
+      }
+
+      const rawDraft = localStorage.getItem(DRAFT_STORAGE_KEY)
+      if (rawDraft) {
+        const parsedDraft = JSON.parse(rawDraft) as Partial<AppDraft>
+        if (parsedDraft.selectedProvince) {
+          setSelectedProvince(parsedDraft.selectedProvince)
+        }
+        if (parsedDraft.selectedScenario) {
+          setSelectedScenario(parsedDraft.selectedScenario)
+        }
+        if (parsedDraft.step) {
+          setStep(parsedDraft.step)
+        }
+        if (parsedDraft.profile) {
+          setProfile((prev) => ({
+            ...prev,
+            ...parsedDraft.profile,
+          }))
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to restore local session', error)
+    } finally {
+      setIsHydrated(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isHydrated || !session) {
+      return
+    }
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+  }, [isHydrated, session])
+
+  useEffect(() => {
+    if (!isHydrated || !session) {
+      return
+    }
+    const draft: AppDraft = {
+      step,
+      selectedProvince,
+      selectedScenario,
+      profile,
+    }
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
+  }, [isHydrated, profile, selectedProvince, selectedScenario, session, step])
 
   const mapOption = useMemo(
     () => ({
@@ -282,21 +336,39 @@ function App() {
 
   const handleProvinceSelect = (province: string) => {
     setSelectedProvince(province)
-    setSelectedCity('')
-    setSelectedDistrict('')
   }
 
   const handleNextFromMap = () => {
-    if (!selectedProvince || !selectedCity || !selectedDistrict) {
+    if (!selectedProvince) {
       return
     }
     setProfile((prev) => ({
       ...prev,
-      hukou: prev.hukou || `${selectedProvince}${selectedCity}`,
-      residence: `${selectedProvince}${selectedCity}${selectedDistrict}`,
-      workPlace: prev.workPlace || `${selectedProvince}${selectedCity}`,
+      hukou: prev.hukou || selectedProvince,
+      residence: selectedProvince,
+      workPlace: prev.workPlace || selectedProvince,
     }))
     setStep('profile')
+  }
+
+  const handleQuickLogin = (mode: AuthMode) => {
+    const defaultName = mode === 'wechat' ? '微信用户' : '游客'
+    const displayName = nicknameInput.trim() || defaultName
+    setSession({
+      mode,
+      displayName,
+      savedAt: new Date().toISOString(),
+    })
+  }
+
+  const handleLogout = () => {
+    setSession(null)
+    setNicknameInput('')
+    setAiMatchedPolicies(null)
+    setSelectedPolicy(null)
+    setPolicyInterpretation(null)
+    setQrPolicy(null)
+    localStorage.removeItem(SESSION_STORAGE_KEY)
   }
 
   const handleProfileSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -385,6 +457,12 @@ function App() {
     }
   }
 
+  const closeInterpretation = () => {
+    setSelectedPolicy(null)
+    setPolicyInterpretation(null)
+    setInterpretError('')
+  }
+
   const buildPolicyShareText = (policy: PolicyCard) => {
     const sourceText = policy.sourceUrl ? `政策原文：${policy.sourceUrl}` : '政策原文：请在“政策找你”平台内查看'
     return [
@@ -421,16 +499,22 @@ function App() {
     <main className="app-shell">
       <header className="gov-header">
         <div className="top-strip">
-          <span className="site-name">首都之窗 · 政策服务</span>
-          <div className="quick-links">
+          <span className="site-name">
+            {session && <span className="user-pill">当前用户：{session.displayName}</span>}
+          </span>
+          <div className="quick-links auth-links">
             <span>政务公开</span>
             <span>政务服务</span>
             <span>政策解读</span>
+            {session && (
+              <button type="button" className="mini-btn" onClick={handleLogout}>
+                退出登录
+              </button>
+            )}
           </div>
         </div>
         <div className="brand-row">
           <div>
-            <p className="brand-subtitle">北京市政策智能匹配演示系统</p>
             <h1>政策找你</h1>
           </div>
           <p className="brand-description">让“本该属于你”的政策权益不再错过</p>
@@ -444,85 +528,73 @@ function App() {
         </nav>
       </header>
 
-      <section className="step-indicator">
-        <span className={step === 'map' ? 'active' : ''}>1. 地图选址</span>
-        <span className={step === 'profile' ? 'active' : ''}>2. 用户画像</span>
-        <span className={step === 'result' ? 'active' : ''}>3. 匹配结果</span>
-      </section>
-
-      {step === 'map' && (
-        <section className="card">
-          <h2>请选择你的地区</h2>
-          <p className="hint">点击中国地图中的省份，再补充市区信息用于政策属地判断。</p>
-          <div className="map-layout">
-            <div className="map-panel">
-              {mapReady ? (
-                <ReactECharts
-                  style={{ height: '460px', width: '100%' }}
-                  option={mapOption}
-                  onEvents={{
-                    click: (params: { name: string }) => handleProvinceSelect(params.name),
-                  }}
-                />
-              ) : (
-                <div className="loading">地图加载中...</div>
-              )}
-            </div>
-            <aside className="select-panel">
-              <label>
-                省份
-                <input value={selectedProvince} readOnly placeholder="点击地图省份自动填充" />
-              </label>
-              <label>
-                城市
-                <select
-                  value={selectedCity}
-                  onChange={(event) => {
-                    setSelectedCity(event.target.value)
-                    setSelectedDistrict('')
-                  }}
-                  disabled={!selectedProvince}
-                >
-                  <option value="">请选择</option>
-                  {cityOptions.map((city) => (
-                    <option key={city} value={city}>
-                      {city}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                区县
-                <select
-                  value={selectedDistrict}
-                  onChange={(event) => setSelectedDistrict(event.target.value)}
-                  disabled={!selectedCity}
-                >
-                  <option value="">请选择</option>
-                  {districtOptions.map((district) => (
-                    <option key={district} value={district}>
-                      {district}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="selection-summary">
-                已选择：
-                {[selectedProvince, selectedCity, selectedDistrict].filter(Boolean).join(' / ') ||
-                  '暂未完成'}
-              </p>
-              <button onClick={handleNextFromMap} disabled={!selectedDistrict}>
-                下一步：完善画像
-              </button>
-            </aside>
+      {!session ? (
+        <section className="card login-card">
+          <h2>欢迎进入政策找你</h2>
+          <p className="hint">
+            这是独立登录页：支持快捷登录和游客模式。登录后会自动记住你的登录状态、地图选址与画像信息，下次打开可直接继续。
+          </p>
+          <label className="login-name-field">
+            微信昵称（可选）
+            <input
+              value={nicknameInput}
+              onChange={(event) => setNicknameInput(event.target.value)}
+              placeholder="不填则默认显示“微信用户”"
+            />
+          </label>
+          <div className="login-actions">
+            <button type="button" onClick={() => handleQuickLogin('wechat')}>
+              微信快捷登录（演示）
+            </button>
+            <button type="button" className="ghost" onClick={() => handleQuickLogin('guest')}>
+              游客直接进入
+            </button>
           </div>
         </section>
-      )}
+      ) : (
+        <>
+          <section className="step-indicator">
+            <span className={step === 'map' ? 'active' : ''}>1. 地图选址</span>
+            <span className={step === 'profile' ? 'active' : ''}>2. 用户画像</span>
+            <span className={step === 'result' ? 'active' : ''}>3. 匹配结果</span>
+          </section>
 
-      {step === 'profile' && (
-        <section className="card">
-          <h2>完善用户画像</h2>
-          <form className="profile-form" onSubmit={handleProfileSubmit}>
+          {step === 'map' && (
+            <section className="card">
+              <h2>请选择你的地区</h2>
+              <p className="hint">点击中国地图中的省份即可，系统将按省份进行政策属地判断。</p>
+              <div className="map-layout">
+                <div className="map-panel">
+                  {mapReady ? (
+                    <ReactECharts
+                      style={{ height: '460px', width: '100%' }}
+                      option={mapOption}
+                      onEvents={{
+                        click: (params: { name: string }) => handleProvinceSelect(params.name),
+                      }}
+                    />
+                  ) : (
+                    <div className="loading">地图加载中...</div>
+                  )}
+                </div>
+                <aside className="select-panel">
+                  <label>
+                    省份
+                    <input value={selectedProvince} readOnly placeholder="点击地图省份自动填充" />
+                  </label>
+                  <p className="selection-summary">已选择：{selectedProvince || '暂未完成'}</p>
+                  <button onClick={handleNextFromMap} disabled={!selectedProvince}>
+                    下一步：完善画像
+                  </button>
+                </aside>
+              </div>
+            </section>
+          )}
+
+          {step === 'profile' && (
+            <section className="card">
+              <h2>完善用户画像</h2>
+              <form className="profile-form" onSubmit={handleProfileSubmit}>
             <label>
               身份类型
               <select
@@ -649,12 +721,12 @@ function App() {
               </button>
               <button type="submit">生成政策匹配结果</button>
             </div>
-          </form>
-        </section>
-      )}
+              </form>
+            </section>
+          )}
 
-      {step === 'result' && (
-        <section className="card">
+          {step === 'result' && (
+            <section className="card">
           <h2>你可享受的政策权益</h2>
           <p className="hint">
             已按
@@ -739,73 +811,70 @@ function App() {
             </button>
             <button onClick={() => setStep('map')}>重新选择地区</button>
           </div>
-        </section>
+            </section>
+          )}
+        </>
       )}
-      <aside className={`interpret-drawer ${selectedPolicy ? 'open' : ''}`}>
-        <div className="interpret-header">
-          <h3>政策解读</h3>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              setSelectedPolicy(null)
-              setPolicyInterpretation(null)
-              setInterpretError('')
-            }}
-          >
-            关闭
-          </button>
-        </div>
-        {selectedPolicy ? (
-          <div className="interpret-body">
-            <p className="interpret-policy-name">{selectedPolicy.name}</p>
-            {interpretLoading && <p>解读生成中...</p>}
-            {interpretError && <p className="empty-tip">{interpretError}</p>}
-            {!interpretLoading && !interpretError && policyInterpretation && (
-              <>
-                <section>
-                  <h4>通俗总结</h4>
-                  <p>{policyInterpretation.summary}</p>
-                </section>
-                <section>
-                  <h4>适用条件</h4>
-                  <ul>
-                    {policyInterpretation.eligibility.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h4>常见不符合原因</h4>
-                  <ul>
-                    {policyInterpretation.disqualifiers.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h4>办理清单</h4>
-                  <ul>
-                    {policyInterpretation.checklist.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h4>风险提醒</h4>
-                  <ul>
-                    {policyInterpretation.riskTips.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </section>
-              </>
-            )}
+      <section
+        className={`interpret-modal ${selectedPolicy ? 'open' : ''}`}
+        onClick={closeInterpretation}
+      >
+        <div className="interpret-panel" onClick={(event) => event.stopPropagation()}>
+          <div className="interpret-header">
+            <h3>政策解读</h3>
+            <button type="button" className="ghost" onClick={closeInterpretation}>
+              关闭
+            </button>
           </div>
-        ) : (
-          <p className="interpret-placeholder">点击政策卡片里的“查看政策解读”后，这里会显示通俗解读。</p>
-        )}
-      </aside>
+          {selectedPolicy && (
+            <div className="interpret-body">
+              <p className="interpret-policy-name">{selectedPolicy.name}</p>
+              {interpretLoading && <p>解读生成中...</p>}
+              {interpretError && <p className="empty-tip">{interpretError}</p>}
+              {!interpretLoading && !interpretError && policyInterpretation && (
+                <>
+                  <section>
+                    <h4>通俗总结</h4>
+                    <p>{policyInterpretation.summary}</p>
+                  </section>
+                  <section>
+                    <h4>适用条件</h4>
+                    <ul>
+                      {policyInterpretation.eligibility.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <h4>常见不符合原因</h4>
+                    <ul>
+                      {policyInterpretation.disqualifiers.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <h4>办理清单</h4>
+                    <ul>
+                      {policyInterpretation.checklist.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                  <section>
+                    <h4>风险提醒</h4>
+                    <ul>
+                      {policyInterpretation.riskTips.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
       <section className={`share-modal ${qrPolicy ? 'open' : ''}`}>
         <div className="share-panel">
           <div className="interpret-header">
