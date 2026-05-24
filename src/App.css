@@ -434,6 +434,16 @@ button.ghost {
   margin: 6px 0 0;
 }
 
+.policy-alarm {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid #b20c2a;
+  background: #fff3e8;
+  color: #7a2d1f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .result-card a {
   color: #a31932;
   text-decoration: none;
@@ -441,6 +451,15 @@ button.ghost {
 
 .result-card a:hover {
   text-decoration: underline;
+}
+
+.policy-actions {
+  margin-top: 10px;
+}
+
+.policy-actions button {
+  padding: 6px 10px;
+  font-size: 13px;
 }
 
 .scenario-tag {
@@ -503,6 +522,74 @@ button.ghost {
   animation: riseIn 0.4s ease both;
 }
 
+.interpret-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(420px, 92vw);
+  background: #fffdf9;
+  border-left: 1px solid #e0cdb8;
+  box-shadow: -18px 0 30px -24px rgba(64, 33, 10, 0.65);
+  transform: translateX(105%);
+  transition: transform 0.26s ease;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+
+.interpret-drawer.open {
+  transform: translateX(0);
+}
+
+.interpret-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid #eddcc9;
+}
+
+.interpret-header h3 {
+  margin: 0;
+  color: #93283d;
+}
+
+.interpret-body {
+  padding: 12px 14px 20px;
+  overflow: auto;
+}
+
+.interpret-policy-name {
+  margin: 0 0 12px;
+  font-weight: 700;
+  color: #5f4024;
+}
+
+.interpret-body section {
+  margin-top: 12px;
+}
+
+.interpret-body h4 {
+  margin: 0 0 6px;
+  color: #6b2c22;
+}
+
+.interpret-body ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.interpret-body li {
+  margin: 4px 0;
+}
+
+.interpret-placeholder {
+  margin: 14px;
+  color: #7f6248;
+}
+
 @keyframes pageFadeIn {
   from {
     opacity: 0;
@@ -562,6 +649,10 @@ button.ghost {
 
   .scene-list {
     gap: 6px;
+  }
+
+  .interpret-drawer {
+    width: 100vw;
   }
 
 }

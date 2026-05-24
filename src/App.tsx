@@ -35,6 +35,14 @@ interface UserProfile {
   freeText: string
 }
 
+interface PolicyInterpretation {
+  summary: string
+  eligibility: string[]
+  disqualifiers: string[]
+  checklist: string[]
+  riskTips: string[]
+}
+
 const cityMap: Record<string, string[]> = {
   北京市: ['北京市'],
   上海市: ['上海市'],
@@ -148,6 +156,35 @@ function getPolicyStatus(applyStart: string, applyEnd: string) {
   return '申报中'
 }
 
+function getPolicyAlarmText(applyStart: string, applyEnd: string) {
+  if (
+    !applyStart ||
+    !applyEnd ||
+    applyStart === '未知' ||
+    applyEnd === '未知' ||
+    Number.isNaN(new Date(applyStart).getTime()) ||
+    Number.isNaN(new Date(applyEnd).getTime())
+  ) {
+    return '政策闹钟：有效期待确认，请查看政策原文或咨询办理窗口'
+  }
+
+  const now = Date.now()
+  const start = new Date(applyStart).getTime()
+  const end = new Date(applyEnd).getTime()
+
+  if (now < start) {
+    const daysUntilStart = Math.ceil((start - now) / (24 * 60 * 60 * 1000))
+    return `政策闹钟：${applyStart} 开始受理，距开始还有 ${daysUntilStart} 天`
+  }
+
+  if (now > end) {
+    return `政策闹钟：本政策已于 ${applyEnd} 截止`
+  }
+
+  const daysLeft = Math.ceil((end - now) / (24 * 60 * 60 * 1000))
+  return `政策闹钟：当前申报中（${applyStart} 至 ${applyEnd}），剩余 ${daysLeft} 天`
+}
+
 function App() {
   const [step, setStep] = useState<Step>('map')
   const [mapReady, setMapReady] = useState(false)
@@ -171,6 +208,10 @@ function App() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiSourceCount, setAiSourceCount] = useState<number | null>(null)
+  const [selectedPolicy, setSelectedPolicy] = useState<PolicyCard | null>(null)
+  const [policyInterpretation, setPolicyInterpretation] = useState<PolicyInterpretation | null>(null)
+  const [interpretLoading, setInterpretLoading] = useState(false)
+  const [interpretError, setInterpretError] = useState('')
 
   useEffect(() => {
     const loadMap = async () => {
@@ -302,6 +343,40 @@ function App() {
       setAiError(error instanceof Error ? error.message : 'AI 匹配失败')
     } finally {
       setAiLoading(false)
+    }
+  }
+
+  const openPolicyInterpretation = async (policy: PolicyCard) => {
+    setSelectedPolicy(policy)
+    setPolicyInterpretation(null)
+    setInterpretError('')
+    setInterpretLoading(true)
+    try {
+      const apiUrl = API_BASE_URL ? `${API_BASE_URL}/api/policy-interpret` : '/api/policy-interpret'
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy, profile }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data?.error ?? '政策解读生成失败')
+      }
+      const interpretation = data?.interpretation ?? null
+      if (!interpretation || typeof interpretation !== 'object') {
+        throw new Error('解读结果格式错误')
+      }
+      setPolicyInterpretation({
+        summary: interpretation.summary ?? '暂无解读摘要',
+        eligibility: Array.isArray(interpretation.eligibility) ? interpretation.eligibility : [],
+        disqualifiers: Array.isArray(interpretation.disqualifiers) ? interpretation.disqualifiers : [],
+        checklist: Array.isArray(interpretation.checklist) ? interpretation.checklist : [],
+        riskTips: Array.isArray(interpretation.riskTips) ? interpretation.riskTips : [],
+      })
+    } catch (error) {
+      setInterpretError(error instanceof Error ? error.message : '解读请求失败')
+    } finally {
+      setInterpretLoading(false)
     }
   }
 
@@ -567,6 +642,7 @@ function App() {
                   <h3>{policy.name}</h3>
                   <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
                 </div>
+                <p className="policy-alarm">{getPolicyAlarmText(policy.applyStart, policy.applyEnd)}</p>
                 <p>
                   <strong>适用对象：</strong>
                   {policy.targetGroup}
@@ -592,6 +668,11 @@ function App() {
                   <strong>下一步：</strong>
                   {policy.nextStep}
                 </p>
+                <div className="policy-actions">
+                  <button type="button" onClick={() => openPolicyInterpretation(policy)}>
+                    查看政策解读
+                  </button>
+                </div>
                 {policy.sourceUrl && (
                   <p>
                     <strong>政策来源：</strong>
@@ -617,6 +698,71 @@ function App() {
           </div>
         </section>
       )}
+      <aside className={`interpret-drawer ${selectedPolicy ? 'open' : ''}`}>
+        <div className="interpret-header">
+          <h3>政策解读</h3>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              setSelectedPolicy(null)
+              setPolicyInterpretation(null)
+              setInterpretError('')
+            }}
+          >
+            关闭
+          </button>
+        </div>
+        {selectedPolicy ? (
+          <div className="interpret-body">
+            <p className="interpret-policy-name">{selectedPolicy.name}</p>
+            {interpretLoading && <p>解读生成中...</p>}
+            {interpretError && <p className="empty-tip">{interpretError}</p>}
+            {!interpretLoading && !interpretError && policyInterpretation && (
+              <>
+                <section>
+                  <h4>通俗总结</h4>
+                  <p>{policyInterpretation.summary}</p>
+                </section>
+                <section>
+                  <h4>适用条件</h4>
+                  <ul>
+                    {policyInterpretation.eligibility.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h4>常见不符合原因</h4>
+                  <ul>
+                    {policyInterpretation.disqualifiers.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h4>办理清单</h4>
+                  <ul>
+                    {policyInterpretation.checklist.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h4>风险提醒</h4>
+                  <ul>
+                    {policyInterpretation.riskTips.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+              </>
+            )}
+          </div>
+        ) : (
+          <p className="interpret-placeholder">点击政策卡片里的“查看政策解读”后，这里会显示通俗解读。</p>
+        )}
+      </aside>
     </main>
   )
 }

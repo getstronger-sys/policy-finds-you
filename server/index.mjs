@@ -125,6 +125,37 @@ function buildPromptPayload({ profile, scenario, identity, policies }) {
   }
 }
 
+function buildLocalInterpretation(policy, profile) {
+  const status =
+    policy.applyStart && policy.applyEnd
+      ? `${policy.applyStart} 至 ${policy.applyEnd}`
+      : '有效期以政策原文为准'
+  return {
+    summary: `${policy.name} 面向 ${policy.targetGroup || '相关人群'}，当前建议优先核实申报时间和申请材料后尽快办理。`,
+    eligibility: [
+      `身份场景：${policy.scenario || '未标注'}，请确认与你的画像一致`,
+      `办理对象：${policy.targetGroup || '请以政策原文对象描述为准'}`,
+      `申报时段：${status}`,
+    ],
+    disqualifiers: [
+      '缺少必要证明材料（证件、社保、经营资质）',
+      '不在政策适用地域或行业范围内',
+      '超过政策申报截止时间',
+    ],
+    checklist: [
+      '打开政策原文并确认最新口径',
+      '整理身份证明/企业证明材料',
+      '核实申报平台或线下窗口',
+      '在截止日前提交并留存回执',
+    ],
+    riskTips: [
+      '政策执行口径可能按年度或批次调整',
+      '若关键条件待确认，建议先电话咨询受理窗口',
+    ],
+    profileSnapshot: profile,
+  }
+}
+
 app.get('/api/health', async (_, res) => {
   let policyCount = 0
   try {
@@ -223,6 +254,86 @@ ${JSON.stringify(payload, null, 2)}
   } catch (error) {
     res.status(500).json({
       error: 'Server error during AI matching.',
+      detail: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
+})
+
+app.post('/api/policy-interpret', async (req, res) => {
+  try {
+    const { policy, profile = null } = req.body ?? {}
+    if (!policy || typeof policy !== 'object') {
+      res.status(400).json({ error: 'Invalid policy payload.' })
+      return
+    }
+
+    if (!deepseekApiKey) {
+      res.json({
+        interpretation: buildLocalInterpretation(policy, profile),
+        mode: 'fallback',
+      })
+      return
+    }
+
+    const systemPrompt =
+      '你是政策解读助手，请将政策内容转写为通俗、可执行的办理说明。返回严格 JSON。'
+    const userPrompt = `
+请解读以下政策，输出 JSON 字段：
+{
+  "summary": "3句以内通俗总结",
+  "eligibility": ["命中条件1","命中条件2","命中条件3"],
+  "disqualifiers": ["常见不符合情况1","常见不符合情况2"],
+  "checklist": ["办理步骤1","办理步骤2","办理步骤3"],
+  "riskTips": ["风险提示1","风险提示2"]
+}
+
+政策信息：
+${JSON.stringify(policy, null, 2)}
+
+用户画像（可为空）：
+${JSON.stringify(profile, null, 2)}
+`
+
+    const llmResponse = await fetch(`${deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${deepseekApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: deepseekModel,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    })
+
+    if (!llmResponse.ok) {
+      const detail = await llmResponse.text()
+      res.status(502).json({
+        error: 'DeepSeek policy interpretation failed.',
+        detail: detail.slice(0, 500),
+      })
+      return
+    }
+
+    const llmJson = await llmResponse.json()
+    const content = llmJson?.choices?.[0]?.message?.content ?? ''
+    const parsed = parseJsonFromLLM(content)
+    if (!parsed || typeof parsed !== 'object') {
+      res.status(502).json({
+        error: 'Failed to parse policy interpretation JSON.',
+        detail: content.slice(0, 500),
+      })
+      return
+    }
+
+    res.json({ interpretation: parsed, mode: 'llm' })
+  } catch (error) {
+    res.status(500).json({
+      error: 'Server error during policy interpretation.',
       detail: error instanceof Error ? error.message : 'Unknown error',
     })
   }
