@@ -298,28 +298,142 @@ async function loadPolicies() {
   return policyCache
 }
 
-function policySearchScore(item, query) {
-  const title = String(item.title ?? '')
-  const snippet = String(item.contentSnippet ?? '')
-  const content = String(item.content ?? '')
-  const province = String(item.province ?? '')
-  const haystack = `${title}\n${snippet}\n${content}\n${province}`.toLowerCase()
-  const normalized = query.toLowerCase().replace(/([^\s,，。;；、]+市)/g, '$1 ').trim()
-  const tokens = normalized
-    .split(/[\s,，。;；、]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 2)
+const POLICY_QUERY_PROVINCES = [
+  '北京',
+  '天津',
+  '河北',
+  '山西',
+  '内蒙古',
+  '辽宁',
+  '吉林',
+  '黑龙江',
+  '上海',
+  '江苏',
+  '浙江',
+  '安徽',
+  '福建',
+  '江西',
+  '山东',
+  '河南',
+  '湖北',
+  '湖南',
+  '广东',
+  '广西',
+  '海南',
+  '重庆',
+  '四川',
+  '贵州',
+  '云南',
+  '西藏',
+  '陕西',
+  '甘肃',
+  '青海',
+  '宁夏',
+  '新疆',
+]
 
-  const keywordList = tokens.length > 0 ? tokens : [query.toLowerCase().trim()].filter(Boolean)
-  let score = 0
-  for (const token of keywordList) {
-    if (title.toLowerCase().includes(token)) score += 6
-    if (snippet.toLowerCase().includes(token)) score += 3
-    if (content.toLowerCase().includes(token)) score += 1
-    if (province.toLowerCase().includes(token)) score += 2
-    if (haystack.includes(token)) score += 1
+const POLICY_TOPIC_TERMS = [
+  '补贴',
+  '扶持',
+  '支持',
+  '援助',
+  '减免',
+  '落户',
+  '人才',
+  '教育',
+  '住房',
+  '创业',
+  '就业',
+  '托育',
+  '生育',
+  '社保',
+  '医保',
+  '培训',
+  '税收',
+  '税费',
+  '创新',
+  '科技',
+]
+
+function tokenizePolicyQuery(query) {
+  const normalized = String(query ?? '')
+    .toLowerCase()
+    .replace(/市/g, '')
+    .trim()
+  if (!normalized) return []
+
+  const tokens = new Set()
+
+  const pushPart = (part) => {
+    const piece = part.trim()
+    if (piece.length < 2) return
+    for (const prov of POLICY_QUERY_PROVINCES) {
+      if (piece.startsWith(prov) && piece.length > prov.length) {
+        tokens.add(prov)
+        pushPart(piece.slice(prov.length))
+        return
+      }
+    }
+    tokens.add(piece)
+    for (const term of POLICY_TOPIC_TERMS) {
+      if (piece.includes(term) && piece !== term) {
+        tokens.add(term)
+        const head = piece.replaceAll(term, '').trim()
+        if (head.length >= 2) tokens.add(head)
+      }
+    }
   }
-  return score
+
+  for (const part of normalized.split(/[\s,，。;；、与及和]+/)) {
+    pushPart(part)
+  }
+
+  for (const prov of POLICY_QUERY_PROVINCES) {
+    if (normalized.startsWith(prov) && normalized.length > prov.length) {
+      tokens.add(prov)
+      const rest = normalized.slice(prov.length).replace(/^[与及和\s]+/, '')
+      for (const part of rest.split(/[与及和]+/)) {
+        pushPart(part)
+      }
+    }
+  }
+
+  if (tokens.size === 0 && normalized.length >= 2) {
+    tokens.add(normalized)
+  }
+
+  return Array.from(tokens)
+}
+
+function policySearchScore(item, query) {
+  const title = String(item.title ?? '').toLowerCase()
+  const snippet = String(item.contentSnippet ?? '').toLowerCase()
+  const content = String(item.content ?? '').toLowerCase()
+  const province = String(item.province ?? '').toLowerCase()
+
+  const keywordList = tokenizePolicyQuery(query)
+  if (keywordList.length === 0) return 0
+
+  const provinceTokenSet = new Set(POLICY_QUERY_PROVINCES)
+  const substantiveTokens = keywordList.filter((token) => !provinceTokenSet.has(token))
+  const tokensToScore = substantiveTokens.length > 0 ? substantiveTokens : keywordList
+
+  let score = 0
+  let matched = 0
+  for (const token of tokensToScore) {
+    let tokenScore = 0
+    if (title.includes(token)) tokenScore += 6
+    if (snippet.includes(token)) tokenScore += 3
+    if (content.includes(token)) tokenScore += 1
+    if (province.includes(token)) tokenScore += 2
+    if (tokenScore > 0) {
+      matched += 1
+      score += tokenScore
+    }
+  }
+
+  const minRequired = tokensToScore.length >= 3 ? 2 : 1
+  return matched >= minRequired ? score : 0
 }
 
 function normalizeProvinceToken(value) {
@@ -965,10 +1079,10 @@ app.get('/api/gov-metrics', (req, res) => {
     feedbackUsers.add(item.userName || '匿名用户')
   }
 
-  const provinceTop = Array.from(provinceMap.entries())
+  const provinceDistribution = Array.from(provinceMap.entries())
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
-    .slice(0, 10)
+  const provinceTop = provinceDistribution.slice(0, 10)
   const policyTop = Array.from(policyMap.entries())
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
@@ -992,6 +1106,7 @@ app.get('/api/gov-metrics', (req, res) => {
     feedbackReachRate,
     questionTotal,
     provinceTop,
+    provinceDistribution,
     policyTop,
     dailyTrend,
     questionTop,

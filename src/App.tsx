@@ -258,6 +258,7 @@ interface GovMetricsPayload {
   feedbackReachRate?: number
   questionTotal?: number
   provinceTop: Array<{ name: string; value: number }>
+  provinceDistribution?: Array<{ name: string; value: number }>
   policyTop: Array<{ name: string; value: number }>
   dailyTrend?: Array<{ date: string; value: number }>
   questionTop?: Array<{ name: string; value: number }>
@@ -644,6 +645,51 @@ const citizenProfileSamples = [
     scenario: '养老',
   },
 ]
+
+const ECHARTS_MAP_PROVINCE_NAMES: Record<string, string> = {
+  北京: '北京市',
+  天津: '天津市',
+  河北: '河北省',
+  山西: '山西省',
+  内蒙古: '内蒙古自治区',
+  辽宁: '辽宁省',
+  吉林: '吉林省',
+  黑龙江: '黑龙江省',
+  上海: '上海市',
+  江苏: '江苏省',
+  浙江: '浙江省',
+  安徽: '安徽省',
+  福建: '福建省',
+  江西: '江西省',
+  山东: '山东省',
+  河南: '河南省',
+  湖北: '湖北省',
+  湖南: '湖南省',
+  广东: '广东省',
+  广西: '广西壮族自治区',
+  海南: '海南省',
+  重庆: '重庆市',
+  四川: '四川省',
+  贵州: '贵州省',
+  云南: '云南省',
+  西藏: '西藏自治区',
+  陕西: '陕西省',
+  甘肃: '甘肃省',
+  青海: '青海省',
+  宁夏: '宁夏回族自治区',
+  新疆: '新疆维吾尔自治区',
+  台湾: '台湾省',
+  香港: '香港特别行政区',
+  澳门: '澳门特别行政区',
+}
+
+function toEchartsMapProvinceName(name: string) {
+  const short = name
+    .trim()
+    .replace(/省|市|自治区|壮族|回族|维吾尔|特别行政区/g, '')
+    .replace(/\s+/g, '')
+  return ECHARTS_MAP_PROVINCE_NAMES[short] ?? name
+}
 
 const NATIONAL_PROVINCES = [
   '北京',
@@ -1141,8 +1187,8 @@ function App() {
     const keywords: string[] = []
     const provinceLabel = normalizeProvinceKey(selectedProvince)
     if (provinceLabel) {
-      keywords.push(`${provinceLabel}补贴`)
-      keywords.push(`${provinceLabel}人才`)
+      keywords.push('补贴')
+      keywords.push('人才')
     }
     if (profile.identity === 'citizen') {
       keywords.push('就业创业支持')
@@ -2272,10 +2318,22 @@ function App() {
       .replace(/省|市|自治区|壮族|回族|维吾尔|特别行政区/g, '')
       .replace(/\s+/g, '')
   }
-  const mapSeriesData = displayedProvinceStats.map((item) => ({
-    name: normalizeProvinceForMap(item.name),
-    value: item.value,
-  }))
+  const heatmapProvinceStats =
+    govMetrics?.provinceDistribution && govMetrics.provinceDistribution.length > 0
+      ? govMetrics.provinceDistribution
+      : displayedProvinceStats
+  const mapSeriesData = useMemo(() => {
+    const valueByShort = new Map<string, number>()
+    for (const item of heatmapProvinceStats) {
+      const short = normalizeProvinceForMap(item.name)
+      valueByShort.set(short, (valueByShort.get(short) ?? 0) + item.value)
+    }
+    return NATIONAL_PROVINCES.map((shortName) => ({
+      name: toEchartsMapProvinceName(shortName),
+      value: valueByShort.get(shortName) ?? 0,
+    }))
+  }, [heatmapProvinceStats])
+  const heatmapMaxValue = Math.max(...mapSeriesData.map((item) => item.value), 1)
   const govFeedbackReachRate =
     typeof govMetrics?.feedbackReachRate === 'number' ? govMetrics.feedbackReachRate : 0
   const govConversionRate = filteredTodoForGov.length
@@ -2287,22 +2345,34 @@ function App() {
     : 0
   const GOV_FUND_BUDGET_BASE = 10_000_000
   const govFundUsageRate = Math.min(100, Math.round((displayedAmountTotal / GOV_FUND_BUDGET_BASE) * 100))
-  const coveredProvinceSet = new Set(mapSeriesData.map((item) => item.name))
-  const policyBlindSpots = NATIONAL_PROVINCES.filter((name) => !coveredProvinceSet.has(name))
+  const policyBlindSpots = NATIONAL_PROVINCES.filter((shortName) => {
+    const row = mapSeriesData.find((item) => item.name === toEchartsMapProvinceName(shortName))
+    return !row || row.value === 0
+  })
   const policyBlindSpotText = policyBlindSpots.length
     ? `盲区 ${policyBlindSpots.length} 个：${policyBlindSpots.slice(0, 6).join('、')}${policyBlindSpots.length > 6 ? '…' : ''}`
     : '当前已覆盖主要省份'
   const govHeatmapOption = {
-    tooltip: { trigger: 'item' },
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: { name?: string; value?: number }) => {
+        const value = Number(params.value ?? 0)
+        return `${params.name ?? ''}<br/>关注次数：${value}`
+      },
+    },
     visualMap: {
       min: 0,
-      max: Math.max(...mapSeriesData.map((item) => item.value), 1),
+      max: heatmapMaxValue,
       left: 16,
       bottom: 16,
       text: ['高', '低'],
       calculable: true,
+      orient: 'vertical',
       inRange: {
-        color: ['#fcead9', '#f6b582', '#e87d45', '#b20c2a'],
+        color: ['#fff5eb', '#fdd49e', '#f27c4a', '#b91326'],
+      },
+      outOfRange: {
+        color: '#f3f4f6',
       },
     },
     series: [
@@ -2311,7 +2381,15 @@ function App() {
         type: 'map',
         map: 'china',
         roam: true,
-        emphasis: { label: { show: true } },
+        label: { show: false },
+        emphasis: {
+          label: { show: true, color: '#111827' },
+          itemStyle: { areaColor: '#fbbf24' },
+        },
+        itemStyle: {
+          borderColor: '#d6d3d1',
+          borderWidth: 0.6,
+        },
         data: mapSeriesData,
       },
     ],
