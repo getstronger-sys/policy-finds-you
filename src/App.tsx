@@ -1097,6 +1097,10 @@ function App() {
   }, [profile])
 
   const resetProfileFields = () => {
+    clearStructuredProfileForNaturalLanguage(false)
+  }
+
+  const clearStructuredProfileForNaturalLanguage = (keepFreeText = false) => {
     setProfile((prev) => ({
       ...prev,
       age: '',
@@ -1104,9 +1108,9 @@ function App() {
       maritalStatus: '',
       educationLevel: '',
       birthPlace: '',
-      hukou: '',
-      residence: selectedProvince || '',
-      workPlace: selectedProvince || '',
+      hukou: selectedProvince || prev.hukou || '',
+      residence: selectedProvince || prev.residence || '',
+      workPlace: selectedProvince || prev.workPlace || '',
       childrenCount: '',
       employmentStatus: '',
       housingNeed: '',
@@ -1123,9 +1127,80 @@ function App() {
       annualTaxBracket: '',
       hasSecondChild: false,
       annualIncome: '',
-      freeText: '',
+      freeText: keepFreeText ? prev.freeText : '',
     }))
     setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
+    setSelectedScenario('全部')
+    setAiMatchedPolicies(null)
+  }
+
+  const switchCitizenInputMode = (mode: CitizenInputMode) => {
+    if (mode === 'text' || mode === 'voice') {
+      const keepFreeText =
+        (citizenInputMode === 'text' || citizenInputMode === 'voice') &&
+        (mode === 'text' || mode === 'voice')
+      clearStructuredProfileForNaturalLanguage(keepFreeText)
+    }
+    if (mode === 'qa') {
+      setQaIndex(0)
+    }
+    if (mode !== 'voice') {
+      stopVoiceInput()
+    }
+    setCitizenInputMode(mode)
+  }
+
+  const parseNaturalLanguageProfile = (text: string, base: UserProfile): UserProfile => {
+    const next: UserProfile = { ...base, freeText: text }
+    const ageMatch = text.match(/(\d{1,3})\s*岁/)
+    if (ageMatch) next.age = ageMatch[1]
+    const cityMatch = text.match(/在([^，,。；;\s]{2,10}?)(工作|生活|居住|上班)/)
+    if (cityMatch) {
+      next.workPlace = cityMatch[1]
+      next.residence = cityMatch[1]
+    }
+    const socialSecurityMatch = text.match(/社保(?:连续)?(?:缴纳|已缴)?(\d+(?:\.\d+)?)\s*(年|个月)/)
+    if (socialSecurityMatch) {
+      const amount = Number(socialSecurityMatch[1])
+      next.socialSecurityMonths =
+        socialSecurityMatch[2] === '年' && Number.isFinite(amount)
+          ? `${Math.round(amount * 12)}个月`
+          : `${socialSecurityMatch[1]}个月`
+    } else if (text.includes('社保')) {
+      next.socialSecurityMonths = '已缴纳'
+    }
+    const providentFundMatch = text.match(/公积金(?:连续)?(?:缴纳|已缴)?(\d+(?:\.\d+)?)\s*(年|个月)/)
+    if (providentFundMatch) {
+      const amount = Number(providentFundMatch[1])
+      next.providentFundMonths =
+        providentFundMatch[2] === '年' && Number.isFinite(amount)
+          ? `${Math.round(amount * 12)}个月`
+          : `${providentFundMatch[1]}个月`
+    } else if (text.includes('公积金')) {
+      next.providentFundMonths = '已缴纳'
+    }
+    if (text.includes('在职')) next.employmentStatus = '在职'
+    if (text.includes('待业') || text.includes('失业')) next.employmentStatus = '待业'
+    if (text.includes('创业')) next.employmentStatus = '创业'
+    if (text.includes('退休')) next.employmentStatus = '退休'
+    if (text.includes('购房')) next.housingNeed = '购房'
+    if (text.includes('租房')) next.housingNeed = '租房'
+    if (text.includes('已婚')) next.maritalStatus = '已婚'
+    if (text.includes('未婚')) next.maritalStatus = '未婚'
+    if (text.includes('二孩') || text.includes('两个孩子')) {
+      next.hasSecondChild = true
+      next.childrenCount = '2'
+      next.familyTag = '二孩家庭'
+    }
+    if (text.includes('低保')) next.lowIncomeStatus = '是'
+    if (text.includes('残疾')) next.disabilityStatus = '是'
+    if (text.includes('退役')) next.veteranStatus = '是'
+    if (text.includes('生育') || text.includes('育儿')) next.policyNeed = '生育/育儿'
+    if (text.includes('就业')) next.policyNeed = '毕业生就业'
+    if (text.includes('医疗')) next.policyNeed = '医疗救助'
+    if (text.includes('租房补贴')) next.policyNeed = '租房补贴'
+    if (text.includes('创业补贴')) next.policyNeed = '创业补贴'
+    return next
   }
 
   const applyCitizenSample = (sampleId: string) => {
@@ -1191,30 +1266,35 @@ function App() {
     const text = profile.freeText.trim()
     if (!text) return
     setProfile((prev) => {
-      const next = { ...prev }
-      const ageMatch = text.match(/(\d{1,3})\s*岁/)
-      if (ageMatch) next.age = ageMatch[1]
-      if (text.includes('在职')) next.employmentStatus = '在职'
-      if (text.includes('待业') || text.includes('失业')) next.employmentStatus = '待业'
-      if (text.includes('创业')) next.employmentStatus = '创业'
-      if (text.includes('购房')) next.housingNeed = '购房'
-      if (text.includes('租房')) next.housingNeed = '租房'
-      if (text.includes('已婚')) next.maritalStatus = '已婚'
-      if (text.includes('未婚')) next.maritalStatus = '未婚'
-      if (text.includes('二孩') || text.includes('两个孩子')) {
-        next.hasSecondChild = true
-        next.childrenCount = next.childrenCount || '2'
+      const base: UserProfile = {
+        ...prev,
+        age: '',
+        gender: '',
+        maritalStatus: '',
+        educationLevel: '',
+        birthPlace: '',
+        hukou: selectedProvince || prev.hukou || '',
+        residence: selectedProvince || prev.residence || '',
+        workPlace: selectedProvince || prev.workPlace || '',
+        childrenCount: '',
+        employmentStatus: '',
+        housingNeed: '',
+        policyNeed: '',
+        socialSecurityMonths: '',
+        providentFundMonths: '',
+        familyTag: '',
+        disabilityStatus: '',
+        veteranStatus: '',
+        lowIncomeStatus: '',
+        hasSecondChild: false,
+        annualIncome: '',
+        freeText: text,
       }
-      if (text.includes('低保')) next.lowIncomeStatus = '是'
-      if (text.includes('残疾')) next.disabilityStatus = '是'
-      if (text.includes('退役')) next.veteranStatus = '是'
-      if (text.includes('社保')) next.socialSecurityMonths = next.socialSecurityMonths || '12个月'
-      if (text.includes('公积金')) next.providentFundMonths = next.providentFundMonths || '12个月'
-      if (text.includes('生育')) next.policyNeed = next.policyNeed || '生育/育儿'
-      if (text.includes('就业')) next.policyNeed = next.policyNeed || '毕业生就业'
-      if (text.includes('医疗')) next.policyNeed = next.policyNeed || '医疗救助'
-      return next
+      return parseNaturalLanguageProfile(text, base)
     })
+    setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
+    setSelectedScenario('全部')
+    setAiMatchedPolicies(null)
   }
 
   const stopVoiceInput = () => {
@@ -2876,32 +2956,33 @@ function App() {
                   <button
                     type="button"
                     className={citizenInputMode === 'structured' ? 'active' : ''}
-                    onClick={() => setCitizenInputMode('structured')}
+                    onClick={() => switchCitizenInputMode('structured')}
                   >
                     快速填表
                   </button>
                   <button
                     type="button"
                     className={citizenInputMode === 'text' ? 'active' : ''}
-                    onClick={() => setCitizenInputMode('text')}
+                    onClick={() => switchCitizenInputMode('text')}
                   >
                     一句话描述
                   </button>
                   <button
                     type="button"
                     className={citizenInputMode === 'voice' ? 'active' : ''}
-                    onClick={() => setCitizenInputMode('voice')}
+                    onClick={() => switchCitizenInputMode('voice')}
                   >
                     我来说你来填
                   </button>
                   <button
                     type="button"
                     className={citizenInputMode === 'qa' ? 'active' : ''}
-                    onClick={() => setCitizenInputMode('qa')}
+                    onClick={() => switchCitizenInputMode('qa')}
                   >
                     一步步问我
                   </button>
                 </div>
+                {(citizenInputMode === 'structured' || citizenInputMode === 'qa') && (
                 <div className="full-row quick-row">
                   {citizenProfileSamples.map((sample) => (
                     <button key={sample.id} type="button" className="ghost chip-button" onClick={() => applyCitizenSample(sample.id)}>
@@ -2909,6 +2990,7 @@ function App() {
                     </button>
                   ))}
                 </div>
+                )}
                 {citizenInputMode === 'structured' && (
                   <>
                 <label>
