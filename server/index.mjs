@@ -9,9 +9,17 @@ dotenv.config()
 
 const app = express()
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 8787)
+function normalizeDeepSeekBaseUrl(rawUrl) {
+  let url = String(rawUrl || 'https://api.deepseek.com').trim()
+  url = url.replace(/\/anthropic\/?$/i, '')
+  url = url.replace(/\/$/, '')
+  if (!url) return 'https://api.deepseek.com'
+  return url
+}
+
 const deepseekApiKey = String(process.env.DEEPSEEK_API_KEY ?? '').trim()
 const deepseekModel = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
-const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').trim()
+const deepseekBaseUrl = normalizeDeepSeekBaseUrl(process.env.DEEPSEEK_BASE_URL)
 const appVersion = process.env.APP_VERSION ?? '0.1.0'
 const knowledgeDirPath = resolve('data/knowledge')
 const distPath = resolve('dist')
