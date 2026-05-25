@@ -313,34 +313,95 @@ function policySearchScore(item, query) {
   return score
 }
 
+function normalizeProvinceToken(value) {
+  return String(value ?? '')
+    .replace(/省|市|自治区|壮族|回族|维吾尔|特别行政区/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+const POLICY_INTENT_KEYWORDS = [
+  '落户',
+  '户口',
+  '户籍',
+  '就业',
+  '创业',
+  '补贴',
+  '租房',
+  '购房',
+  '人才',
+  '生育',
+  '育儿',
+  '社保',
+  '公积金',
+  '低保',
+  '残疾',
+  '退役',
+  '毕业生',
+  '失业',
+  '招聘',
+  '助学',
+  '医疗',
+  '养老',
+  '减税',
+  '退税',
+  '融资',
+  '安居',
+  '引才',
+]
+
+function extractIntentKeywords(text) {
+  const source = String(text ?? '')
+  return POLICY_INTENT_KEYWORDS.filter((keyword) => source.includes(keyword))
+}
+
 function getPolicyCandidateScore(item, context) {
   const title = String(item.title ?? '')
   const snippet = String(item.contentSnippet ?? '')
-  const content = String(item.content ?? '')
+  const content = String(item.content ?? '').slice(0, 2500)
   const province = String(item.province ?? '')
-  const combined = `${title}\n${snippet}\n${content}\n${province}`.toLowerCase()
+  const titleLower = title.toLowerCase()
+  const snippetLower = snippet.toLowerCase()
+  const combined = `${title}\n${snippet}\n${content}`.toLowerCase()
   let score = 0
 
   if (context.province) {
-    const p = context.province.toLowerCase()
-    if (province.toLowerCase().includes(p)) score += 12
-    if (combined.includes(p)) score += 4
+    const normalizedProvince = normalizeProvinceToken(context.province)
+    const itemProvince = normalizeProvinceToken(province)
+    if (normalizedProvince && itemProvince && (itemProvince.includes(normalizedProvince) || normalizedProvince.includes(itemProvince))) {
+      score += 18
+    }
+  }
+
+  const intentKeywords = context.intentKeywords ?? []
+  for (const keyword of intentKeywords) {
+    const token = keyword.toLowerCase()
+    if (titleLower.includes(token)) score += 16
+    if (snippetLower.includes(token)) score += 9
+    if (combined.includes(token)) score += 4
   }
 
   for (const token of context.tokens) {
-    if (token.length < 2) continue
-    if (title.toLowerCase().includes(token)) score += 8
-    if (snippet.toLowerCase().includes(token)) score += 4
-    if (content.toLowerCase().includes(token)) score += 2
+    if (token.length < 2 || token === '全部') continue
+    if (titleLower.includes(token)) score += 7
+    if (snippetLower.includes(token)) score += 4
     if (combined.includes(token)) score += 1
   }
 
-  if (context.identity === 'company') {
-    if (/企业|公司|法人|经营|税|创业|招商/.test(combined)) score += 3
-  } else if (/个人|家庭|居民|人才|就业|生育|养老|社保/.test(combined)) {
-    score += 3
+  if (context.identity === 'citizen') {
+    if (/营商环境|招商引资|商事登记|市场监管条例/.test(title) && intentKeywords.length > 0) {
+      const directHit = intentKeywords.some((keyword) => titleLower.includes(keyword.toLowerCase()) || snippetLower.includes(keyword.toLowerCase()))
+      if (!directHit) score -= 12
+    }
+    if (/条例|办法|规定/.test(title) && intentKeywords.length > 0) {
+      const directHit = intentKeywords.some((keyword) => titleLower.includes(keyword.toLowerCase()) || snippetLower.includes(keyword.toLowerCase()))
+      if (!directHit) score -= 6
+    }
+  } else if (/个人|家庭|居民|生育|低保|残疾人/.test(title) && !/企业|公司|法人|创业/.test(combined)) {
+    score -= 10
   }
-  return score
+
+  return Math.max(0, score)
 }
 
 function toTokenList(input) {
@@ -353,58 +414,143 @@ function toTokenList(input) {
 
 function buildMatchContext(profile, scenario, identity) {
   const p = profile ?? {}
+  const freeText = String(p.freeText ?? '')
   const tokenSource = [
-    scenario,
-    p.needPolicy,
-    p.needPolicyDetail,
-    p.personalDescription,
-    p.companyIndustry,
-    p.jobTitle,
+    scenario !== '全部' ? scenario : '',
+    p.policyNeed,
     p.housingNeed,
     p.employmentStatus,
     p.familyTag,
     p.residence,
     p.workPlace,
+    p.hukou,
+    p.companyIndustry,
+    p.companyStage,
+    p.socialSecurityMonths ? `社保${p.socialSecurityMonths}` : '',
+    p.providentFundMonths ? `公积金${p.providentFundMonths}` : '',
+    p.hasSecondChild ? '二孩生育' : '',
+    p.lowIncomeStatus === '是' ? '低保救助' : '',
+    p.disabilityStatus === '是' ? '残疾人补贴' : '',
+    p.veteranStatus === '是' ? '退役军人' : '',
+    p.age ? `${p.age}岁` : '',
+    freeText,
   ]
     .filter(Boolean)
     .join(' ')
-  const tokens = Array.from(new Set(toTokenList(tokenSource))).slice(0, 40)
-  const province = String(p.residence || p.workPlace || '').trim()
+  const intentKeywords = Array.from(new Set(extractIntentKeywords(tokenSource)))
+  const tokens = Array.from(new Set(toTokenList(tokenSource).concat(intentKeywords)))
+    .filter((token) => token.length >= 2 && token !== '全部')
+    .slice(0, 50)
+  const province = normalizeProvinceToken(p.residence || p.workPlace || p.hukou || '')
   return {
     tokens,
     province,
     identity: identity === 'company' ? 'company' : 'citizen',
+    intentKeywords,
+    freeText,
+    profileSummary: tokenSource.slice(0, 240),
   }
 }
 
-function buildLocalMatchRows(candidates, scenario, identity) {
-  return candidates.slice(0, 8).map((item, idx) => ({
+function selectRankedCandidates(allPolicies, matchContext) {
+  const ranked = allPolicies
+    .map((item) => ({
+      item,
+      score: getPolicyCandidateScore(item, matchContext),
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  let minScore = 8
+  let filtered = ranked.filter((entry) => entry.score >= minScore)
+  if (filtered.length < 5) {
+    minScore = 4
+    filtered = ranked.filter((entry) => entry.score >= minScore)
+  }
+  if (filtered.length === 0) {
+    filtered = ranked.slice(0, 12)
+  }
+
+  return {
+    candidates: filtered.slice(0, 40).map((entry) => entry.item),
+    topScore: ranked[0]?.score ?? 0,
+  }
+}
+
+const WEAK_MATCH_REASON_PATTERN = /间接|可能包含|未明确|不直接|较为宽泛|或包含|或许|也许/
+
+function filterMatchedPolicies(rows, candidates, matchContext) {
+  const candidateByUrl = new Map(
+    candidates.filter((item) => item.url).map((item) => [String(item.url), item]),
+  )
+  const candidateByTitle = new Map(
+    candidates.filter((item) => item.title).map((item) => [String(item.title), item]),
+  )
+
+  return rows
+    .filter((row) => row && typeof row === 'object')
+    .filter((row) => {
+      const confidence = Number(row.confidence ?? 0)
+      const reason = String(row.reason ?? '')
+      const matchLevel = String(row.match_level ?? '')
+      const sourceUrl = String(row.source_url ?? '')
+      const name = String(row.name ?? '')
+
+      if (confidence < 0.5) return false
+      if (matchLevel === '需确认' && confidence < 0.62) return false
+      if (WEAK_MATCH_REASON_PATTERN.test(reason) && confidence < 0.68) return false
+
+      const candidate = (sourceUrl && candidateByUrl.get(sourceUrl)) || candidateByTitle.get(name)
+      if (!candidate) return false
+
+      if ((matchContext.intentKeywords ?? []).length > 0) {
+        const haystack = `${candidate.title}\n${candidate.contentSnippet}`.toLowerCase()
+        const directIntentHit = matchContext.intentKeywords.some((keyword) => haystack.includes(keyword.toLowerCase()))
+        if (!directIntentHit && confidence < 0.72) return false
+      }
+
+      return true
+    })
+    .slice(0, 5)
+}
+
+function buildLocalMatchRows(candidates, scenario, identity, matchContext) {
+  const rows = candidates
+    .map((item) => ({
+      item,
+      score: getPolicyCandidateScore(item, matchContext),
+    }))
+    .filter((entry) => entry.score >= 6)
+    .slice(0, 5)
+
+  return rows.map(({ item, score }, idx) => ({
     name: item.title ?? '未命名政策',
-    match_level: idx < 3 ? '可能符合' : '需确认',
+    match_level: score >= 18 ? '可能符合' : '需确认',
     target_group: identity === 'company' ? '相关企业主体' : '相关居民群体',
     scenario: scenario || '综合场景',
-    reason: '基于地区与关键词命中进行智能检索，建议进一步核对申报条件。',
+    reason: '基于地区与需求关键词命中，建议进一步核对申报条件。',
     benefit: item.contentSnippet ? String(item.contentSnippet).slice(0, 60) : '请查看政策原文',
     apply_start: item.publishDate ?? '未知',
     apply_end: item.deadlineHint ?? '未知',
     next_step: '点击查看政策详情并按材料清单准备申报。',
     source_url: item.url ?? '',
-    confidence: Number((0.62 - idx * 0.04).toFixed(2)),
+    confidence: Number(Math.min(0.78, 0.48 + score / 40).toFixed(2)),
   }))
 }
 
-function buildPromptPayload({ profile, scenario, identity, policies }) {
-  const compactPolicies = policies.slice(0, 80).map((item) => ({
+function buildPromptPayload({ profile, scenario, identity, policies, matchContext }) {
+  const compactPolicies = policies.slice(0, 40).map((item) => ({
     title: item.title,
     province: item.province ?? '',
     publishDate: toSafeDate(item.publishDate),
     deadlineHint: item.deadlineHint ?? '',
-    contentSnippet: String(item.contentSnippet ?? '').slice(0, 120),
+    contentSnippet: String(item.contentSnippet ?? '').slice(0, 220),
     url: item.url,
   }))
 
   return {
     profile,
+    profileSummary: matchContext?.profileSummary ?? '',
+    userIntentKeywords: matchContext?.intentKeywords ?? [],
     selectedScenario: scenario,
     identity,
     policy_candidates: compactPolicies,
@@ -412,7 +558,7 @@ function buildPromptPayload({ profile, scenario, identity, policies }) {
       matched_policies: [
         {
           name: '政策名称',
-          match_level: '完全符合|可能符合|需确认',
+          match_level: '完全符合|可能符合',
           target_group: '适用对象描述',
           scenario: '场景',
           reason: '匹配原因',
@@ -830,25 +976,19 @@ app.post('/api/match-policy', async (req, res) => {
 
     const allPolicies = await loadPolicies()
     const matchContext = buildMatchContext(profile, scenario, identity)
-    const rankedCandidates = allPolicies
-      .map((item) => ({
-        item,
-        score: getPolicyCandidateScore(item, matchContext),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .map((entry) => entry.item)
-    const selectedCandidates = rankedCandidates.slice(0, 80)
+    const { candidates: selectedCandidates } = selectRankedCandidates(allPolicies, matchContext)
     const payload = buildPromptPayload({
       profile,
       scenario,
       identity,
       policies: selectedCandidates,
+      matchContext,
     })
 
     if (!deepseekApiKey) {
       res.json({
         sourceCount: allPolicies.length,
-        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity, matchContext),
         mode: 'fallback',
         error: 'Missing DEEPSEEK_API_KEY. Using local matcher.',
       })
@@ -856,15 +996,22 @@ app.post('/api/match-policy', async (req, res) => {
     }
 
     const systemPrompt =
-      '你是政策匹配助手。只能基于给定政策候选进行匹配，不要虚构政策。返回严格 JSON。'
+      '你是政策精准匹配助手。只能基于给定 policy_candidates 匹配，禁止虚构政策。必须返回严格 JSON。'
     const userPrompt = `
-请根据用户画像和身份场景，从 policy_candidates 中筛选最相关政策。
-输出要求：
+请根据用户画像、profileSummary 和 userIntentKeywords，从 policy_candidates 中筛选高度相关政策。
+
+严格规则：
 1) 只返回 JSON，不要解释。
-2) match_level 只能是：完全符合、可能符合、需确认
-3) confidence 在 0~1 之间
-4) 最多返回 8 条，按相关性排序。
-5) apply_start/apply_end 若无法确定，填 "未知"。
+2) 宁缺毋滥：没有强相关政策时 matched_policies 返回 []。
+3) 禁止推荐仅“间接相关”“可能包含”“未明确提及”的政策。
+4) 用户关注 ${JSON.stringify(matchContext.intentKeywords)} 时，政策标题或摘要必须直接出现至少一个对应关键词，否则不要返回。
+5) 例如用户要落户/就业，不要返回营商环境条例、泛泛的综合法规。
+6) confidence < 0.5 的政策不要返回；弱相关结果不要凑数。
+7) 最多返回 5 条，按 confidence 降序。
+8) match_level 只能是：完全符合、可能符合（不要使用“需确认”敷衍弱匹配）。
+9) reason 必须写清与用户哪项具体需求对应，禁止写“间接支持”。
+10) apply_start/apply_end 若无法确定，填 "未知"。
+11) source_url 必须来自候选政策原文链接。
 
 输入数据：
 ${JSON.stringify(payload, null, 2)}
@@ -878,7 +1025,7 @@ ${JSON.stringify(payload, null, 2)}
       },
       body: JSON.stringify({
         model: deepseekModel,
-        temperature: 0.2,
+        temperature: 0.1,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -890,7 +1037,7 @@ ${JSON.stringify(payload, null, 2)}
       const detail = await llmResponse.text()
       res.json({
         sourceCount: allPolicies.length,
-        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity, matchContext),
         mode: 'fallback',
         error: 'DeepSeek API request failed.',
         detail: detail.slice(0, 500),
@@ -905,19 +1052,26 @@ ${JSON.stringify(payload, null, 2)}
     if (!parsed || !Array.isArray(parsed.matched_policies)) {
       res.json({
         sourceCount: allPolicies.length,
-        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity, matchContext),
         mode: 'fallback',
         detail: 'Failed to parse DeepSeek JSON output.',
       })
       return
     }
 
-    const rows = parsed.matched_policies.filter((item) => item && typeof item === 'object')
-    const safeRows = rows.length > 0 ? rows : buildLocalMatchRows(selectedCandidates, scenario, identity)
+    const filteredRows = filterMatchedPolicies(parsed.matched_policies, selectedCandidates, matchContext)
+    const fallbackRows = buildLocalMatchRows(selectedCandidates, scenario, identity, matchContext).filter(
+      (row) => Number(row.confidence ?? 0) >= 0.5,
+    )
+    const safeRows = filteredRows.length > 0 ? filteredRows : fallbackRows
     res.json({
       sourceCount: allPolicies.length,
       matched_policies: safeRows,
-      mode: rows.length > 0 ? 'llm' : 'fallback',
+      mode: filteredRows.length > 0 ? 'llm' : safeRows.length > 0 ? 'fallback' : 'empty',
+      qualityNote:
+        safeRows.length === 0
+          ? '未找到与您画像高度相关的政策，建议补充落户/就业/补贴等具体需求后再试，或使用上方关键词搜索。'
+          : '',
     })
   } catch (error) {
     res.status(500).json({

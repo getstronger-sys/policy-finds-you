@@ -1647,6 +1647,7 @@ function App() {
     return {
       rows: normalized,
       sourceCount: Number(data?.sourceCount ?? 0),
+      qualityNote: String(data?.qualityNote ?? '').trim(),
     }
   }
 
@@ -1657,6 +1658,12 @@ function App() {
       const result = await requestAiMatch(profile, selectedScenario)
       setAiMatchedPolicies(result.rows)
       setAiSourceCount(result.sourceCount)
+      if (result.rows.length === 0) {
+        setAiError(
+          result.qualityNote ||
+            '未找到与您画像高度相关的政策，建议补充落户/就业/补贴等具体需求后再试，或使用上方关键词搜索。',
+        )
+      }
     } catch (error) {
       setAiError(error instanceof Error ? error.message : 'AI 匹配失败')
     } finally {
@@ -3555,6 +3562,9 @@ function App() {
                 </div>
                 {aiError && <p className="empty-tip">{aiError}</p>}
                 <div className="result-list">
+                  {displayPolicies.length === 0 && aiMatchedPolicies && (
+                    <p className="empty-tip">AI 未返回高置信度匹配结果，请补充更具体的需求描述后重试。</p>
+                  )}
                   {displayPolicies.map((policy, index) => (
                     <article
                       key={policy.name}
@@ -3639,7 +3649,7 @@ function App() {
                     </article>
                   ))}
                 </div>
-                {displayPolicies.length === 0 && (
+                {displayPolicies.length === 0 && !aiMatchedPolicies && (
                   <p className="empty-tip">当前身份与场景下暂无直接命中政策，请切换场景或补充画像信息。</p>
                 )}
                 <div className="action-row">
