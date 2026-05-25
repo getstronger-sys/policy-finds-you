@@ -9,9 +9,9 @@ dotenv.config()
 
 const app = express()
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 8787)
-const deepseekApiKey = process.env.DEEPSEEK_API_KEY
+const deepseekApiKey = String(process.env.DEEPSEEK_API_KEY ?? '').trim()
 const deepseekModel = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
-const deepseekBaseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
+const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').trim()
 const appVersion = process.env.APP_VERSION ?? '0.1.0'
 const knowledgeDirPath = resolve('data/knowledge')
 const distPath = resolve('dist')
@@ -278,6 +278,54 @@ function buildPromptPayload({ profile, scenario, identity, policies }) {
   }
 }
 
+function deepseekKeyHint() {
+  if (!deepseekApiKey) return { configured: false, length: 0, suffix: '' }
+  return {
+    configured: true,
+    length: deepseekApiKey.length,
+    suffix: deepseekApiKey.slice(-4),
+    prefix: deepseekApiKey.slice(0, 3),
+  }
+}
+
+async function probeDeepSeek() {
+  if (!deepseekApiKey) {
+    return { ok: false, reason: 'missing_key' }
+  }
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 20000)
+    const llmResponse = await fetch(`${deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${deepseekApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: deepseekModel,
+        max_tokens: 16,
+        messages: [{ role: 'user', content: 'ping' }],
+      }),
+    })
+    clearTimeout(timer)
+    const detail = await llmResponse.text()
+    return {
+      ok: llmResponse.ok,
+      httpStatus: llmResponse.status,
+      detail: detail.slice(0, 500),
+      error: llmResponse.ok ? null : mapDeepSeekError(detail),
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      httpStatus: 0,
+      detail: '',
+      error: error instanceof Error ? error.message : 'Unknown fetch error',
+    }
+  }
+}
+
 function mapDeepSeekError(detailText) {
   const detail = String(detailText || '')
   try {
@@ -387,10 +435,22 @@ app.get('/api/health', async (_, res) => {
   res.json({
     ok: true,
     hasApiKey: Boolean(deepseekApiKey),
+    keyHint: deepseekKeyHint(),
     version: appVersion,
     policyCount,
     policyCacheTtlMs,
     cacheLoadedAt: policyCacheAt || null,
+    uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+  })
+})
+
+app.get('/api/deepseek-probe', async (_, res) => {
+  const probe = await probeDeepSeek()
+  res.json({
+    ...probe,
+    keyHint: deepseekKeyHint(),
+    model: deepseekModel,
+    baseUrl: deepseekBaseUrl,
     uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
   })
 })
@@ -767,6 +827,8 @@ ${JSON.stringify(profile, null, 2)}
       res.status(502).json({
         error: mapDeepSeekError(detail),
         detail: detail.slice(0, 500),
+        httpStatus: llmResponse.status,
+        keyHint: deepseekKeyHint(),
       })
       return
     }
