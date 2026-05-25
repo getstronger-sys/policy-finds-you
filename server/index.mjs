@@ -11,7 +11,8 @@ const app = express()
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 8787)
 function normalizeDeepSeekBaseUrl(rawUrl) {
   let url = String(rawUrl || 'https://api.deepseek.com').trim()
-  url = url.replace(/\/anthropic\/?$/i, '')
+  url = url.replace(/\/anthropic(\/|$)/gi, '/')
+  url = url.replace(/\/v1\/?$/i, '')
   url = url.replace(/\/$/, '')
   if (!url) return 'https://api.deepseek.com'
   return url
@@ -322,7 +323,7 @@ async function probeDeepSeek() {
       ok: llmResponse.ok,
       httpStatus: llmResponse.status,
       detail: detail.slice(0, 500),
-      error: llmResponse.ok ? null : mapDeepSeekError(detail),
+      error: llmResponse.ok ? null : mapDeepSeekError(detail, llmResponse.status),
     }
   } catch (error) {
     return {
@@ -334,7 +335,10 @@ async function probeDeepSeek() {
   }
 }
 
-function mapDeepSeekError(detailText) {
+function mapDeepSeekError(detailText, httpStatus = 0) {
+  if (httpStatus === 404) {
+    return 'DeepSeek 接口地址配置错误：DEEPSEEK_BASE_URL 必须是 https://api.deepseek.com（不要带 /anthropic）。'
+  }
   const detail = String(detailText || '')
   try {
     const parsed = JSON.parse(detail)
@@ -458,6 +462,7 @@ app.get('/api/deepseek-probe', async (_, res) => {
     ...probe,
     keyHint: deepseekKeyHint(),
     model: deepseekModel,
+    configuredBaseUrl: String(process.env.DEEPSEEK_BASE_URL ?? ''),
     baseUrl: deepseekBaseUrl,
     uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
   })
