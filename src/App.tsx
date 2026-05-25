@@ -60,6 +60,194 @@ interface AppDraft {
   profile: UserProfile
 }
 
+interface KnowledgePolicy {
+  title: string
+  url: string
+  province: string
+  publishDate: string
+  deadlineHint: string
+  contentSnippet: string
+  content: string
+  source: string
+}
+
+interface DailyUpdateBrief {
+  dateText: string
+  policyCount: number
+  delta: number | null
+}
+
+function summarizeAudience(title: string, profile: UserProfile) {
+  if (title.includes('企业') || title.includes('营商') || title.includes('税')) {
+    return '企业主体、个体工商户及经营单位'
+  }
+  if (title.includes('人才')) {
+    return '人才、引进人员及相关单位'
+  }
+  return profile.identity === 'citizen' ? '普通公民与相关家庭群体' : '企业或法人主体'
+}
+
+interface ReviewInputs {
+  socialSecurityMonths: string
+  familyTag: string
+  enterpriseType: string
+}
+
+interface EligibilityCheck {
+  key: string
+  label: string
+  status: 'pass' | 'missing' | 'risk'
+  detail: string
+  options?: string[]
+}
+
+function getCheckStatusText(status: EligibilityCheck['status']) {
+  if (status === 'pass') return '已满足'
+  if (status === 'risk') return '需核验'
+  return '待补充'
+}
+
+function buildFriendlyPolicyMessage(title: string, snippet: string) {
+  const text = `${title} ${snippet}`.replace(/\s+/g, ' ')
+  if (text.includes('人才')) return '重点是帮符合条件的人才降低就业和安居成本，尽早申报更稳妥。'
+  if (text.includes('补贴')) return '这类政策通常有明确受理窗口，符合条件就能拿到实实在在的补贴。'
+  if (text.includes('企业') || text.includes('营商')) return '这条政策主要在给企业减负增效，越早申报越容易赶上窗口期。'
+  if (text.includes('住房')) return '这条政策和住房支持有关，建议优先确认资格和申报时间。'
+  return '这条政策与你当前身份和地区相关，建议按步骤准备材料并尽快办理。'
+}
+
+function buildEligibilityAnalysis(
+  profile: UserProfile,
+  selectedProvince: string,
+  reviewInputs: ReviewInputs,
+): EligibilityCheck[] {
+  if (profile.identity === 'company') {
+    return [
+      {
+        key: 'company-location',
+        label: '注册地/经营地',
+        status: profile.workPlace ? 'pass' : 'missing',
+        detail: profile.workPlace || '缺少企业注册地或经营地信息',
+        options: !profile.workPlace && selectedProvince ? [selectedProvince, `${selectedProvince}本地`] : undefined,
+      },
+      {
+        key: 'enterprise-type',
+        label: '企业类型',
+        status: reviewInputs.enterpriseType ? 'pass' : 'missing',
+        detail: reviewInputs.enterpriseType || '请确认企业是否为小微/高新/科技型主体',
+        options: !reviewInputs.enterpriseType ? ['小微企业', '高新技术企业', '科技型中小企业'] : undefined,
+      },
+      {
+        key: 'tax-or-income',
+        label: '税务/营收信息',
+        status: profile.annualIncome ? 'pass' : 'missing',
+        detail: profile.annualIncome || '缺少纳税或营收区间信息',
+        options: !profile.annualIncome ? ['0-100万', '100-500万', '500万以上'] : undefined,
+      },
+    ]
+  }
+
+  const age = Number(profile.age)
+  const ageStatus: EligibilityCheck['status'] = profile.age ? (age >= 18 ? 'pass' : 'risk') : 'missing'
+  return [
+    {
+      key: 'age',
+      label: '年龄条件',
+      status: ageStatus,
+      detail: !profile.age ? '缺少年龄信息' : age >= 18 ? `当前年龄 ${profile.age}` : `当前年龄 ${profile.age}，需确认政策是否允许未成年人申领`,
+      options: !profile.age ? ['18-24', '25-35', '36-50', '50+'] : undefined,
+    },
+    {
+      key: 'hukou-or-residence',
+      label: '户籍/常住地',
+      status: profile.hukou || profile.residence ? 'pass' : 'missing',
+      detail: profile.hukou || profile.residence || '缺少户籍或常住地信息',
+      options: !(profile.hukou || profile.residence) && selectedProvince ? [`${selectedProvince}户籍`, `${selectedProvince}常住`] : undefined,
+    },
+    {
+      key: 'social-security',
+      label: '社保连续缴纳',
+      status: reviewInputs.socialSecurityMonths ? 'pass' : 'missing',
+      detail: reviewInputs.socialSecurityMonths
+        ? `已补充：连续缴纳 ${reviewInputs.socialSecurityMonths}`
+        : '缺少社保连续缴纳月数信息',
+      options: !reviewInputs.socialSecurityMonths ? ['6个月', '12个月', '24个月'] : undefined,
+    },
+    {
+      key: 'family-condition',
+      label: '家庭情况',
+      status: profile.hasSecondChild || reviewInputs.familyTag ? 'pass' : 'missing',
+      detail:
+        profile.hasSecondChild || reviewInputs.familyTag
+          ? profile.hasSecondChild
+            ? '已识别：二孩家庭'
+            : `已补充：${reviewInputs.familyTag}`
+          : '缺少家庭情况标签（如二孩/养老/残疾家庭）',
+      options: !(profile.hasSecondChild || reviewInputs.familyTag) ? ['二孩家庭', '赡养老人', '残疾家庭成员'] : undefined,
+    },
+  ]
+}
+
+function buildApplicationSteps(isCompany: boolean) {
+  if (isCompany) {
+    return [
+      { title: '资格核验', desc: '确认企业类型、注册地、行业是否命中政策。' },
+      { title: '材料准备', desc: '准备营业执照、税务证明、项目佐证材料。' },
+      { title: '系统申报', desc: '在政务平台填报并上传材料，提交回执。' },
+      { title: '审核兑付', desc: '关注审核节点，按通知补件并完成兑付。' },
+    ]
+  }
+  return [
+    { title: '资格核验', desc: '核对年龄、户籍、社保及家庭条件是否满足。' },
+    { title: '材料准备', desc: '准备身份证明、关系证明、社保或收入证明。' },
+    { title: '提交申请', desc: '线上填报或窗口提交，确保信息完整准确。' },
+    { title: '进度跟踪', desc: '按通知补件/查询审核结果，通过后领取权益。' },
+  ]
+}
+
+function policyPriorityScore(checks: EligibilityCheck[]) {
+  const passCount = checks.filter((item) => item.status === 'pass').length
+  const riskCount = checks.filter((item) => item.status === 'risk').length
+  const total = Math.max(checks.length, 1)
+  const score = Math.round((passCount / total) * 80 + 20 - riskCount * 8)
+  return Math.max(20, Math.min(98, score))
+}
+
+function getBenefitPreview(policy: KnowledgePolicy) {
+  if (policy.deadlineHint?.trim()) return policy.deadlineHint
+  const snippet = policy.contentSnippet?.trim() || ''
+  if (!snippet) return '请以政策原文公布的补贴标准和支持范围为准。'
+  return snippet.slice(0, 56)
+}
+
+function buildMaterialList(isCompany: boolean) {
+  if (isCompany) {
+    return [
+      { name: '营业执照副本', url: 'https://gjzwfw.www.gov.cn/', tip: '企业基础主体证明' },
+      { name: '纳税/社保缴纳证明', url: 'https://etax.chinatax.gov.cn/', tip: '用于核验经营与缴费情况' },
+      { name: '项目实施或费用凭证', url: 'https://www.gov.cn/', tip: '用于证明政策适配场景' },
+    ]
+  }
+  return [
+    { name: '身份证明（身份证/户口本）', url: 'https://gjzwfw.www.gov.cn/', tip: '个人主体信息材料' },
+    { name: '关系证明（婚育/家庭）', url: 'https://www.mca.gov.cn/', tip: '二孩、家庭类政策常需材料' },
+    { name: '社保或收入证明', url: 'https://si.12333.gov.cn/', tip: '就业、补贴政策常用核验材料' },
+  ]
+}
+
+async function readApiJson(response: Response) {
+  const raw = await response.text()
+  if (!raw) {
+    return {}
+  }
+  try {
+    return JSON.parse(raw) as Record<string, any>
+  } catch {
+    const compact = raw.replace(/\s+/g, ' ').slice(0, 120)
+    throw new Error(`接口返回非 JSON（HTTP ${response.status}）：${compact}`)
+  }
+}
+
 const basePolicies: PolicyCard[] = [
   {
     name: '二孩家庭育儿补贴',
@@ -189,6 +377,9 @@ function getPolicyAlarmText(applyStart: string, applyEnd: string) {
 function App() {
   const [session, setSession] = useState<UserSession | null>(null)
   const [nicknameInput, setNicknameInput] = useState('')
+  const [showLoginPopup, setShowLoginPopup] = useState(true)
+  const [showDailyBrief, setShowDailyBrief] = useState(false)
+  const [dailyBrief, setDailyBrief] = useState<DailyUpdateBrief | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
   const [step, setStep] = useState<Step>('map')
   const [mapReady, setMapReady] = useState(false)
@@ -214,6 +405,18 @@ function App() {
   const [policyInterpretation, setPolicyInterpretation] = useState<PolicyInterpretation | null>(null)
   const [interpretLoading, setInterpretLoading] = useState(false)
   const [interpretError, setInterpretError] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState('')
+  const [searchResults, setSearchResults] = useState<KnowledgePolicy[]>([])
+  const [searchHint, setSearchHint] = useState('')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [selectedKnowledgePolicy, setSelectedKnowledgePolicy] = useState<KnowledgePolicy | null>(null)
+  const [reviewInputs, setReviewInputs] = useState<ReviewInputs>({
+    socialSecurityMonths: '',
+    familyTag: '',
+    enterpriseType: '',
+  })
   const [qrPolicy, setQrPolicy] = useState<PolicyCard | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [qrLoading, setQrLoading] = useState(false)
@@ -285,6 +488,53 @@ function App() {
     localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
   }, [isHydrated, profile, selectedProvince, selectedScenario, session, step])
 
+  useEffect(() => {
+    if (session) {
+      setShowLoginPopup(false)
+    }
+  }, [session])
+
+  useEffect(() => {
+    if (!session) {
+      return
+    }
+    const loadDailyBrief = async () => {
+      try {
+        const apiUrl = API_BASE_URL ? `${API_BASE_URL}/api/health` : '/api/health'
+        const response = await fetch(apiUrl)
+        const data = await readApiJson(response)
+        if (!response.ok || typeof data?.policyCount !== 'number') return
+
+        const today = new Date().toISOString().slice(0, 10)
+        const storageKey = 'policy-finds-you.daily-brief'
+        const raw = localStorage.getItem(storageKey)
+        const prev = raw ? (JSON.parse(raw) as { lastSeenDate?: string; lastPolicyCount?: number }) : {}
+        const shouldShow = prev?.lastSeenDate !== today
+        const prevCount = typeof prev?.lastPolicyCount === 'number' ? prev.lastPolicyCount : null
+        const delta = prevCount === null ? null : data.policyCount - prevCount
+
+        if (shouldShow) {
+          setDailyBrief({
+            dateText: today,
+            policyCount: data.policyCount,
+            delta,
+          })
+          setShowDailyBrief(true)
+        }
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({
+            lastSeenDate: today,
+            lastPolicyCount: data.policyCount,
+          }),
+        )
+      } catch {
+        // keep silent for daily brief
+      }
+    }
+    void loadDailyBrief()
+  }, [session])
+
   const mapOption = useMemo(
     () => ({
       tooltip: { trigger: 'item' },
@@ -333,6 +583,41 @@ function App() {
     extraDiscoverableCount > 0
       ? `你已解锁 ${unlockedPolicyCount}/10 项专属政策，补充出生地可再发现 ${extraDiscoverableCount} 项`
       : `你已解锁 ${unlockedPolicyCount}/10 项专属政策`
+  const guessedKeywords = useMemo(() => {
+    const keywords: string[] = []
+    if (selectedProvince) {
+      keywords.push(`${selectedProvince} 补贴`)
+      keywords.push(`${selectedProvince} 人才`)
+    }
+    if (profile.identity === 'citizen') {
+      keywords.push('就业创业支持')
+      keywords.push('住房与教育')
+    } else {
+      keywords.push('税费减免')
+      keywords.push('科技创新扶持')
+    }
+    if (profile.hasSecondChild) {
+      keywords.push('生育与托育补贴')
+    }
+    return Array.from(new Set(keywords)).slice(0, 6)
+  }, [profile.hasSecondChild, profile.identity, selectedProvince])
+  const eligibilityChecks = useMemo(() => {
+    if (!selectedKnowledgePolicy && !selectedPolicy) return []
+    return buildEligibilityAnalysis(profile, selectedProvince, reviewInputs)
+  }, [profile, reviewInputs, selectedKnowledgePolicy, selectedPolicy, selectedProvince])
+  const checkScore = useMemo(() => policyPriorityScore(eligibilityChecks), [eligibilityChecks])
+  const passCount = useMemo(
+    () => eligibilityChecks.filter((item) => item.status === 'pass').length,
+    [eligibilityChecks],
+  )
+  const missingCount = useMemo(
+    () => eligibilityChecks.filter((item) => item.status !== 'pass').length,
+    [eligibilityChecks],
+  )
+  const materialList = useMemo(
+    () => buildMaterialList(profile.identity === 'company'),
+    [profile.identity],
+  )
 
   const handleProvinceSelect = (province: string) => {
     setSelectedProvince(province)
@@ -368,6 +653,13 @@ function App() {
     setSelectedPolicy(null)
     setPolicyInterpretation(null)
     setQrPolicy(null)
+    setSearchResults([])
+    setSearchQuery('')
+    setSearchHint('')
+    setHasSearched(false)
+    setSelectedKnowledgePolicy(null)
+    setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
+    setShowLoginPopup(true)
     localStorage.removeItem(SESSION_STORAGE_KEY)
   }
 
@@ -394,7 +686,7 @@ function App() {
         }),
       })
 
-      const data = await response.json()
+      const data = await readApiJson(response)
       if (!response.ok) {
         throw new Error(data?.error ?? 'AI 匹配请求失败')
       }
@@ -423,6 +715,56 @@ function App() {
     }
   }
 
+  const runPolicySearch = async (keyword?: string) => {
+    const query = (keyword ?? searchQuery).trim()
+    if (!query) {
+      setSearchError('请输入关键词后再搜索')
+      return
+    }
+
+    setSearchLoading(true)
+    setSearchError('')
+    setSearchHint('')
+    setHasSearched(true)
+    setSearchQuery(query)
+    try {
+      const params = new URLSearchParams({ q: query, limit: '10' })
+      if (selectedProvince) {
+        params.set('province', selectedProvince)
+      }
+      const apiUrl = API_BASE_URL
+        ? `${API_BASE_URL}/api/policy-search?${params.toString()}`
+        : `/api/policy-search?${params.toString()}`
+      const response = await fetch(apiUrl)
+      const data = await readApiJson(response)
+      if (!response.ok) {
+        throw new Error(data?.error ?? '政策搜索失败')
+      }
+      let rows: KnowledgePolicy[] = Array.isArray(data?.rows) ? data.rows : []
+      if (rows.length === 0 && selectedProvince) {
+        const globalParams = new URLSearchParams({ q: query, limit: '10' })
+        const globalApiUrl = API_BASE_URL
+          ? `${API_BASE_URL}/api/policy-search?${globalParams.toString()}`
+          : `/api/policy-search?${globalParams.toString()}`
+        const globalResponse = await fetch(globalApiUrl)
+        const globalData = await readApiJson(globalResponse)
+        if (globalResponse.ok) {
+          rows = Array.isArray(globalData?.rows) ? globalData.rows : []
+          if (rows.length > 0) {
+            setSearchHint(`在“${selectedProvince}”未命中，已为你展示全国范围的相关政策。`)
+          } else {
+            setSearchHint(`在“${selectedProvince}”及全国范围都未命中，请尝试更短关键词。`)
+          }
+        }
+      }
+      setSearchResults(rows)
+    } catch (error) {
+      setSearchError(error instanceof Error ? error.message : '政策搜索失败')
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
   const openPolicyInterpretation = async (policy: PolicyCard) => {
     setSelectedPolicy(policy)
     setPolicyInterpretation(null)
@@ -435,7 +777,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ policy, profile }),
       })
-      const data = await response.json()
+      const data = await readApiJson(response)
       if (!response.ok) {
         throw new Error(data?.error ?? '政策解读生成失败')
       }
@@ -451,7 +793,11 @@ function App() {
         riskTips: Array.isArray(interpretation.riskTips) ? interpretation.riskTips : [],
       })
     } catch (error) {
-      setInterpretError(error instanceof Error ? error.message : '解读请求失败')
+      if (error instanceof Error && error.message.includes('接口返回非 JSON')) {
+        setInterpretError('政策解读服务当前不可用，请先确认后端服务已启动或线上服务已完成最新部署。')
+      } else {
+        setInterpretError(error instanceof Error ? error.message : '解读请求失败')
+      }
     } finally {
       setInterpretLoading(false)
     }
@@ -461,6 +807,49 @@ function App() {
     setSelectedPolicy(null)
     setPolicyInterpretation(null)
     setInterpretError('')
+  }
+
+  const closeKnowledgePolicy = () => {
+    setSelectedKnowledgePolicy(null)
+  }
+
+  const applyQuickOption = (key: string, value: string) => {
+    if (key === 'age') {
+      const normalized = value.replace('+', '')
+      const ageValue = normalized.includes('-') ? normalized.split('-')[0] : normalized
+      setProfile((prev) => ({ ...prev, age: ageValue }))
+      return
+    }
+    if (key === 'hukou-or-residence') {
+      setProfile((prev) => ({
+        ...prev,
+        hukou: prev.hukou || value,
+        residence: prev.residence || value,
+      }))
+      return
+    }
+    if (key === 'social-security') {
+      setReviewInputs((prev) => ({ ...prev, socialSecurityMonths: value }))
+      return
+    }
+    if (key === 'family-condition') {
+      if (value.includes('二孩')) {
+        setProfile((prev) => ({ ...prev, hasSecondChild: true }))
+      }
+      setReviewInputs((prev) => ({ ...prev, familyTag: value }))
+      return
+    }
+    if (key === 'enterprise-type') {
+      setReviewInputs((prev) => ({ ...prev, enterpriseType: value }))
+      return
+    }
+    if (key === 'tax-or-income') {
+      setProfile((prev) => ({ ...prev, annualIncome: value }))
+      return
+    }
+    if (key === 'company-location') {
+      setProfile((prev) => ({ ...prev, workPlace: value, residence: prev.residence || value }))
+    }
   }
 
   const buildPolicyShareText = (policy: PolicyCard) => {
@@ -530,6 +919,17 @@ function App() {
 
       {!session ? (
         <section className="card login-card">
+          {showLoginPopup && (
+            <aside className="login-popover" role="status" aria-live="polite">
+              <div className="login-popover-head">
+                <strong>新功能提示</strong>
+                <button type="button" className="ghost mini-btn" onClick={() => setShowLoginPopup(false)}>
+                  关闭
+                </button>
+              </div>
+              <p>你现在可以先搜索政策，再看匹配结果；详细页支持分步办理指引与材料清单。</p>
+            </aside>
+          )}
           <div className="login-hero">
             <h2>欢迎进入政策找你</h2>
             <p className="hint">
@@ -737,36 +1137,102 @@ function App() {
           )}
 
           {step === 'result' && (
-            <section className="card">
-          <h2>你可享受的政策权益</h2>
-          <p className="hint">
-            已按
-            {profile.identity === 'citizen' ? '个人' : '法人'}
-            身份和
-            {selectedScenario}
-            场景筛选，每条结果展示申报窗口和下一步办理建议。
-          </p>
-          <div className="unlock-banner">{unlockHintText}</div>
-          <div className="ai-toolbar">
-            <button
-              type="button"
-              onClick={runAiMatch}
-              disabled={aiLoading}
-              className={aiLoading ? 'is-loading' : ''}
-            >
-              {aiLoading ? 'AI 匹配中...' : '使用 DeepSeek 智能匹配'}
-            </button>
-            {aiSourceCount !== null && <span>已基于 {aiSourceCount} 条本地政策知识匹配</span>}
-            {aiMatchedPolicies && <span className="ai-badge">当前展示 AI 结果</span>}
-          </div>
-          {aiError && <p className="empty-tip">{aiError}</p>}
-          <div className="result-list">
-            {displayPolicies.map((policy, index) => (
-              <article
-                key={policy.name}
-                className="result-card"
-                style={{ animationDelay: `${index * 60}ms` }}
-              >
+            <>
+              <section className="card">
+                <h2>猜你想搜什么</h2>
+                <p className="hint">结合你的画像和地区，推荐你优先关注这些政策主题。</p>
+                <section className="policy-search-zone">
+                  <div className="guess-chip-list">
+                    {guessedKeywords.map((keyword) => (
+                      <button
+                        key={keyword}
+                        type="button"
+                        className="ghost guess-chip"
+                        onClick={() => void runPolicySearch(keyword)}
+                      >
+                        {keyword}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="policy-search-row">
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="搜索政策关键词，例如：人才补贴、创业、税费减免"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void runPolicySearch()
+                        }
+                      }}
+                    />
+                    <button type="button" onClick={() => void runPolicySearch()} disabled={searchLoading}>
+                      {searchLoading ? '搜索中...' : '搜索政策'}
+                    </button>
+                  </div>
+                  {searchError && <p className="empty-tip">{searchError}</p>}
+                  {searchHint && <p className="search-hint">{searchHint}</p>}
+                  {hasSearched && !searchLoading && !searchError && searchResults.length === 0 && (
+                    <p className="empty-tip">暂无匹配结果，建议换更短的关键词（如“人才”“补贴”“创业”）。</p>
+                  )}
+                  {searchResults.length > 0 && (
+                    <div className="search-result-list">
+                      {searchResults.map((item) => (
+                        <article key={`${item.url}-${item.title}`} className="search-result-card">
+                          <div>
+                            <h4>{item.title}</h4>
+                            <p>
+                              {item.province || '全国'} · 发布于 {item.publishDate || '未知'}
+                            </p>
+                          </div>
+                          <p>{item.contentSnippet || '暂无摘要，请点击查看详细解读。'}</p>
+                          <div className="policy-actions">
+                            <button type="button" onClick={() => setSelectedKnowledgePolicy(item)}>
+                              查看详细解读
+                            </button>
+                            {item.url && (
+                              <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                                政策原文
+                              </a>
+                            )}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </section>
+
+              <section className="card">
+                <h2>你可享受的政策权益</h2>
+                <p className="hint">
+                  已按
+                  {profile.identity === 'citizen' ? '个人' : '法人'}
+                  身份和
+                  {selectedScenario}
+                  场景筛选，每条结果展示申报窗口和下一步办理建议。
+                </p>
+                <div className="unlock-banner">{unlockHintText}</div>
+                <div className="ai-toolbar">
+                  <button
+                    type="button"
+                    onClick={runAiMatch}
+                    disabled={aiLoading}
+                    className={aiLoading ? 'is-loading' : ''}
+                  >
+                    {aiLoading ? 'AI 匹配中...' : '使用 DeepSeek 智能匹配'}
+                  </button>
+                  {aiSourceCount !== null && <span>已基于 {aiSourceCount} 条本地政策知识匹配</span>}
+                  {aiMatchedPolicies && <span className="ai-badge">当前展示 AI 结果</span>}
+                </div>
+                {aiError && <p className="empty-tip">{aiError}</p>}
+                <div className="result-list">
+                  {displayPolicies.map((policy, index) => (
+                    <article
+                      key={policy.name}
+                      className="result-card"
+                      style={{ animationDelay: `${index * 60}ms` }}
+                    >
                 <div className="result-head">
                   <h3>{policy.name}</h3>
                   <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
@@ -829,19 +1295,20 @@ function App() {
                 {typeof policy.confidence === 'number' && (
                   <p className="confidence-tag">模型置信度 {(policy.confidence * 100).toFixed(0)}%</p>
                 )}
-              </article>
-            ))}
-          </div>
-          {displayPolicies.length === 0 && (
-            <p className="empty-tip">当前身份与场景下暂无直接命中政策，请切换场景或补充画像信息。</p>
-          )}
-          <div className="action-row">
-            <button className="ghost" onClick={() => setStep('profile')}>
-              返回修改画像
-            </button>
-            <button onClick={() => setStep('map')}>重新选择地区</button>
-          </div>
-            </section>
+                    </article>
+                  ))}
+                </div>
+                {displayPolicies.length === 0 && (
+                  <p className="empty-tip">当前身份与场景下暂无直接命中政策，请切换场景或补充画像信息。</p>
+                )}
+                <div className="action-row">
+                  <button className="ghost" onClick={() => setStep('profile')}>
+                    返回修改画像
+                  </button>
+                  <button onClick={() => setStep('map')}>重新选择地区</button>
+                </div>
+              </section>
+            </>
           )}
         </>
       )}
@@ -861,46 +1328,267 @@ function App() {
               <p className="interpret-policy-name">{selectedPolicy.name}</p>
               {interpretLoading && <p>解读生成中...</p>}
               {interpretError && <p className="empty-tip">{interpretError}</p>}
-              {!interpretLoading && !interpretError && policyInterpretation && (
+              {!interpretLoading && !interpretError && (
                 <>
+                  <div className="detail-quick-grid">
+                    <div className="detail-quick-item">
+                      <p className="policy-label">申请对象</p>
+                      <p className="policy-value">{selectedPolicy.targetGroup}</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">办理渠道</p>
+                      <p className="policy-value">优先线上办理；无法线上提交时前往本地政务服务窗口。</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">可享权益</p>
+                      <p className="policy-value">{selectedPolicy.benefit}</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">时间信息</p>
+                      <p className="policy-value">
+                        申报窗口：{selectedPolicy.applyStart} 至 {selectedPolicy.applyEnd}（{getPolicyStatus(selectedPolicy.applyStart, selectedPolicy.applyEnd)}）
+                      </p>
+                    </div>
+                  </div>
                   <section>
-                    <h4>通俗总结</h4>
-                    <p>{policyInterpretation.summary}</p>
+                    <h4>政策说明</h4>
+                    <p>
+                      {policyInterpretation?.summary ||
+                        buildFriendlyPolicyMessage(selectedPolicy.name, selectedPolicy.reason)}
+                    </p>
+                  </section>
+                  <section className="progress-section">
+                    <h4>资格判断结果</h4>
+                    <div className="apply-score-row">
+                      <span>当前匹配度</span>
+                      <div className="heat-bar" aria-hidden="true">
+                        <span style={{ width: `${checkScore}%` }} />
+                      </div>
+                      <strong>{checkScore}分</strong>
+                    </div>
+                    <div className="score-dial-wrap">
+                      <div
+                        className="score-dial"
+                        style={{ ['--score' as string]: `${checkScore}` }}
+                        aria-label={`当前匹配度${checkScore}分`}
+                      >
+                        <span>{checkScore}</span>
+                      </div>
+                    </div>
+                    <p className="search-hint">
+                      已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
+                    </p>
+                    <div className="eligibility-list">
+                      {eligibilityChecks.map((check) => (
+                        <article key={`interpret-${check.key}`} className={`eligibility-item ${check.status}`}>
+                          <div className="eligibility-head">
+                            <p className="policy-label">{check.label}</p>
+                            <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
+                          </div>
+                          <p className="policy-value">{check.detail}</p>
+                          {check.options && check.options.length > 0 && (
+                            <div className="quick-option-row">
+                              {check.options.map((option) => (
+                                <button
+                                  key={`interpret-${check.key}-${option}`}
+                                  type="button"
+                                  className="ghost quick-option-btn"
+                                  onClick={() => applyQuickOption(check.key, option)}
+                                >
+                                  选“{option}”
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="progress-section">
+                    <h4>申领路径</h4>
+                    <div className="step-track">
+                      {(policyInterpretation?.checklist?.length
+                        ? policyInterpretation.checklist.map((item) => ({ title: `步骤`, desc: item }))
+                        : buildApplicationSteps(profile.identity === 'company')
+                      ).map((step, idx) => (
+                        <article key={`interpret-step-${idx}-${step.desc}`} className="step-node">
+                          <span className="step-index">{idx + 1}</span>
+                          <div>
+                            <p className="policy-label">{step.title || `步骤 ${idx + 1}`}</p>
+                            <p className="policy-value">{step.desc}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
                   </section>
                   <section>
-                    <h4>适用条件</h4>
-                    <ul>
-                      {policyInterpretation.eligibility.map((item) => (
-                        <li key={item}>{item}</li>
+                    <h4>材料准备与模板</h4>
+                    <div className="material-list">
+                      {materialList.map((item) => (
+                        <article key={`interpret-${item.name}`} className="material-card">
+                          <p className="policy-label">{item.name}</p>
+                          <p className="policy-value">{item.tip}</p>
+                          <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                            查看办理入口
+                          </a>
+                        </article>
                       ))}
-                    </ul>
+                    </div>
+                    <p className="template-preview">
+                      模板示例：本人/本企业拟申请《{selectedPolicy.name}》，已确认身份为“
+                      {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
+                      所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
+                    </p>
                   </section>
                   <section>
-                    <h4>常见不符合原因</h4>
-                    <ul>
-                      {policyInterpretation.disqualifiers.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <section>
-                    <h4>办理清单</h4>
-                    <ul>
-                      {policyInterpretation.checklist.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <section>
-                    <h4>风险提醒</h4>
-                    <ul>
-                      {policyInterpretation.riskTips.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
+                    <h4>可享福利提示</h4>
+                    <p>{selectedPolicy.benefit}</p>
+                    {selectedPolicy.sourceUrl && (
+                      <a href={selectedPolicy.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
+                        打开官网原文
+                      </a>
+                    )}
                   </section>
                 </>
               )}
+            </div>
+          )}
+        </div>
+      </section>
+      <section
+        className={`knowledge-modal ${selectedKnowledgePolicy ? 'open' : ''}`}
+        onClick={closeKnowledgePolicy}
+      >
+        <div className="knowledge-panel" onClick={(event) => event.stopPropagation()}>
+          <div className="interpret-header">
+            <h3>政策详情可视化解读</h3>
+            <button type="button" className="ghost" onClick={closeKnowledgePolicy}>
+              关闭
+            </button>
+          </div>
+          {selectedKnowledgePolicy && (
+            <div className="interpret-body">
+              <p className="interpret-policy-name">{selectedKnowledgePolicy.title}</p>
+              <div className="detail-quick-grid">
+                <div className="detail-quick-item">
+                  <p className="policy-label">申请对象</p>
+                  <p className="policy-value">
+                    {summarizeAudience(selectedKnowledgePolicy.title, profile)}
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">办理渠道</p>
+                  <p className="policy-value">
+                    线上政务服务网可申报；材料复杂时建议去本地政务服务中心窗口提交。
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">可享权益</p>
+                  <p className="policy-value">
+                    {getBenefitPreview(selectedKnowledgePolicy)}
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">时间信息</p>
+                  <p className="policy-value">
+                    发布日期：{selectedKnowledgePolicy.publishDate || '未知'}
+                    {selectedKnowledgePolicy.deadlineHint ? `；${selectedKnowledgePolicy.deadlineHint}` : ''}
+                  </p>
+                </div>
+              </div>
+              <section>
+                <h4>政策说明</h4>
+                <p>{buildFriendlyPolicyMessage(selectedKnowledgePolicy.title, selectedKnowledgePolicy.contentSnippet)}</p>
+              </section>
+              <section className="progress-section">
+                <h4>资格判断结果</h4>
+                <div className="apply-score-row">
+                  <span>当前匹配度</span>
+                  <div className="heat-bar" aria-hidden="true">
+                    <span style={{ width: `${checkScore}%` }} />
+                  </div>
+                  <strong>{checkScore}分</strong>
+                </div>
+                <div className="score-dial-wrap">
+                  <div
+                    className="score-dial"
+                    style={{ ['--score' as string]: `${checkScore}` }}
+                    aria-label={`当前匹配度${checkScore}分`}
+                  >
+                    <span>{checkScore}</span>
+                  </div>
+                </div>
+                <p className="search-hint">
+                  已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
+                </p>
+                <div className="eligibility-list">
+                  {eligibilityChecks.map((check) => (
+                    <article key={check.key} className={`eligibility-item ${check.status}`}>
+                      <div className="eligibility-head">
+                        <p className="policy-label">{check.label}</p>
+                        <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
+                      </div>
+                      <p className="policy-value">{check.detail}</p>
+                      {check.options && check.options.length > 0 && (
+                        <div className="quick-option-row">
+                          {check.options.map((option) => (
+                            <button
+                              key={`${check.key}-${option}`}
+                              type="button"
+                              className="ghost quick-option-btn"
+                              onClick={() => applyQuickOption(check.key, option)}
+                            >
+                              选“{option}”
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+              <section className="progress-section">
+                <h4>申领路径</h4>
+                <div className="step-track">
+                  {buildApplicationSteps(profile.identity === 'company').map((step, idx) => (
+                    <article key={step.title} className="step-node">
+                      <span className="step-index">{idx + 1}</span>
+                      <div>
+                        <p className="policy-label">{step.title}</p>
+                        <p className="policy-value">{step.desc}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <h4>材料准备与模板</h4>
+                <div className="material-list">
+                  {materialList.map((item) => (
+                    <article key={item.name} className="material-card">
+                      <p className="policy-label">{item.name}</p>
+                      <p className="policy-value">{item.tip}</p>
+                      <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                        查看办理入口
+                      </a>
+                    </article>
+                  ))}
+                </div>
+                <p className="template-preview">
+                  模板示例：本人/本企业拟申请《{selectedKnowledgePolicy.title}》，已确认身份为“
+                  {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
+                  所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
+                </p>
+              </section>
+              <section>
+                <h4>可享福利提示</h4>
+                <p>{getBenefitPreview(selectedKnowledgePolicy)}</p>
+                {selectedKnowledgePolicy.url && (
+                  <a href={selectedKnowledgePolicy.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                    打开官网原文
+                  </a>
+                )}
+              </section>
             </div>
           )}
         </div>
@@ -936,6 +1624,24 @@ function App() {
             </div>
           )}
         </div>
+      </section>
+      <section className={`daily-brief-modal ${showDailyBrief && dailyBrief ? 'open' : ''}`}>
+        {dailyBrief && (
+          <div className="daily-brief-panel">
+            <p className="policy-label">今日政策更新</p>
+            <h3>{dailyBrief.policyCount} 条在库政策</h3>
+            <p className="policy-value">
+              日期：{dailyBrief.dateText}
+              {dailyBrief.delta !== null &&
+                (dailyBrief.delta >= 0
+                  ? `，较上次 +${dailyBrief.delta} 条`
+                  : `，较上次 ${dailyBrief.delta} 条`)}
+            </p>
+            <button type="button" onClick={() => setShowDailyBrief(false)}>
+              我知道了
+            </button>
+          </div>
+        )}
       </section>
     </main>
   )

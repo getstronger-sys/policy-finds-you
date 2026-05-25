@@ -1,0 +1,28 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff3e6"/>
+      <stop offset="1" stop-color="#f4e5d7"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d39d73"/>
+      <stop offset="1" stop-color="#b56e46"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="url(#sky)"/>
+  <g opacity="0.26">
+    <path d="M0 690L120 640L250 675L380 620L530 655L680 600L820 640L960 590L1110 635L1270 575L1440 615L1600 565V900H0V690Z" fill="#d08c61"/>
+  </g>
+  <g opacity="0.2">
+    <rect x="170" y="375" width="70" height="250" fill="url(#tower)"/>
+    <rect x="255" y="330" width="84" height="295" fill="url(#tower)"/>
+    <rect x="355" y="410" width="66" height="215" fill="url(#tower)"/>
+    <rect x="800" y="345" width="95" height="280" fill="url(#tower)"/>
+    <rect x="915" y="300" width="80" height="325" fill="url(#tower)"/>
+    <rect x="1015" y="390" width="64" height="235" fill="url(#tower)"/>
+    <rect x="1220" y="360" width="88" height="265" fill="url(#tower)"/>
+  </g>
+  <g opacity="0.45">
+    <circle cx="1210" cy="180" r="84" fill="#fff7ec"/>
+  </g>
+</svg>

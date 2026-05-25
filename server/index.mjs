@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { extname, resolve } from 'node:path'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
@@ -13,11 +13,14 @@ const deepseekApiKey = process.env.DEEPSEEK_API_KEY
 const deepseekModel = process.env.DEEPSEEK_MODEL ?? 'deepseek-chat'
 const deepseekBaseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'
 const appVersion = process.env.APP_VERSION ?? '0.1.0'
-const policyFilePath = resolve('data/knowledge/beijing-policies.json')
+const knowledgeDirPath = resolve('data/knowledge')
 const distPath = resolve('dist')
 const indexHtmlPath = resolve('dist/index.html')
 const isProduction = process.env.NODE_ENV === 'production'
 const startedAt = Date.now()
+let policyCache = null
+let policyCacheAt = 0
+const policyCacheTtlMs = Number(process.env.KNOWLEDGE_CACHE_TTL_MS ?? 15000)
 
 if (!isProduction) {
   app.use(cors())
@@ -83,17 +86,78 @@ function parseJsonFromLLM(content) {
 }
 
 async function loadPolicies() {
-  const file = await readFile(policyFilePath, 'utf8')
-  const records = JSON.parse(file)
-  if (!Array.isArray(records)) {
-    throw new Error('Policy file format error.')
+  const now = Date.now()
+  if (policyCache && now - policyCacheAt < policyCacheTtlMs) {
+    return policyCache
   }
-  return records
+
+  const files = await readdir(knowledgeDirPath)
+  const policyFiles = files.filter((fileName) => {
+    return extname(fileName).toLowerCase() === '.json' && fileName.endsWith('-policies.json')
+  })
+
+  if (policyFiles.length === 0) {
+    throw new Error('No policy knowledge files found.')
+  }
+
+  const merged = []
+  for (const fileName of policyFiles) {
+    const filePath = resolve(knowledgeDirPath, fileName)
+    const file = await readFile(filePath, 'utf8')
+    const records = JSON.parse(file)
+    if (!Array.isArray(records)) {
+      continue
+    }
+    const province = fileName.replace(/-policies\.json$/i, '')
+    for (const item of records) {
+      if (!item || typeof item !== 'object') continue
+      merged.push({
+        ...item,
+        province: item.province ?? province,
+      })
+    }
+  }
+
+  const dedupMap = new Map()
+  for (const item of merged) {
+    const key = `${item.url ?? ''}|${item.title ?? ''}`
+    if (!dedupMap.has(key)) {
+      dedupMap.set(key, item)
+    }
+  }
+  policyCache = Array.from(dedupMap.values())
+  policyCacheAt = Date.now()
+  return policyCache
+}
+
+function policySearchScore(item, query) {
+  const title = String(item.title ?? '')
+  const snippet = String(item.contentSnippet ?? '')
+  const content = String(item.content ?? '')
+  const province = String(item.province ?? '')
+  const haystack = `${title}\n${snippet}\n${content}\n${province}`.toLowerCase()
+  const normalized = query.toLowerCase()
+  const tokens = normalized
+    .split(/[\s,，。;；、]+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+
+  const keywordList = tokens.length > 0 ? tokens : [normalized]
+  let score = 0
+  for (const token of keywordList) {
+    if (title.toLowerCase().includes(token)) score += 6
+    if (snippet.toLowerCase().includes(token)) score += 3
+    if (content.toLowerCase().includes(token)) score += 1
+    if (province.toLowerCase().includes(token)) score += 2
+    if (haystack.includes(token)) score += 1
+  }
+  return score
 }
 
 function buildPromptPayload({ profile, scenario, identity, policies }) {
   const compactPolicies = policies.slice(0, 120).map((item) => ({
     title: item.title,
+    province: item.province ?? '',
     publishDate: toSafeDate(item.publishDate),
     deadlineHint: item.deadlineHint ?? '',
     contentSnippet: item.contentSnippet ?? '',
@@ -168,8 +232,58 @@ app.get('/api/health', async (_, res) => {
     hasApiKey: Boolean(deepseekApiKey),
     version: appVersion,
     policyCount,
+    policyCacheTtlMs,
+    cacheLoadedAt: policyCacheAt || null,
     uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
   })
+})
+
+app.get('/api/policy-search', async (req, res) => {
+  try {
+    const query = String(req.query.q ?? '').trim()
+    const province = String(req.query.province ?? '').trim()
+    const limitRaw = Number(req.query.limit ?? 12)
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(30, limitRaw)) : 12
+
+    const policies = await loadPolicies()
+    let filtered = policies
+    if (province) {
+      filtered = filtered.filter((item) => String(item.province ?? '').includes(province))
+    }
+
+    if (query) {
+      filtered = filtered
+        .map((item) => ({ item, score: policySearchScore(item, query) }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.item)
+    } else {
+      filtered = filtered.sort((a, b) => String(b.publishDate ?? '').localeCompare(String(a.publishDate ?? '')))
+    }
+
+    const rows = filtered.slice(0, limit).map((item) => ({
+      title: item.title ?? '未命名政策',
+      url: item.url ?? '',
+      province: item.province ?? '',
+      publishDate: item.publishDate ?? '未知',
+      deadlineHint: item.deadlineHint ?? '',
+      contentSnippet: item.contentSnippet ?? '',
+      content: item.content ?? '',
+      source: item.source ?? '',
+    }))
+
+    res.json({
+      total: filtered.length,
+      rows,
+      query,
+      province,
+    })
+  } catch (error) {
+    res.status(500).json({
+      error: 'Policy search failed.',
+      detail: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
 })
 
 app.post('/api/match-policy', async (req, res) => {
