@@ -705,12 +705,56 @@ button.ghost {
   min-width: 0;
 }
 
-.guest-brand-main h1 {
+.guest-brand-main h1.brand-emphasis {
   margin: 0;
-  font-size: clamp(28px, 4vw, 38px);
-  line-height: 1.1;
+  font-size: clamp(32px, 5vw, 44px);
+  line-height: 1.05;
+  letter-spacing: 2px;
+}
+
+.brand-emphasis {
+  display: block;
+  font-size: clamp(44px, 8vw, 58px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: 3px;
   color: #b20c2a;
-  letter-spacing: 0.8px;
+  text-shadow: 0 8px 22px rgba(178, 12, 42, 0.2);
+}
+
+.brand-emphasis-inline {
+  font-weight: 800;
+  color: #b20c2a;
+  letter-spacing: 1px;
+}
+
+.login-mark {
+  display: inline-block;
+  margin: 0 auto 10px;
+  font-size: 12px;
+  padding: 3px 12px;
+  border: 1px solid #dec0a3;
+  color: #9a6c40;
+  background: #fff9f1;
+}
+
+.login-title {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.login-title-prefix {
+  font-size: 22px;
+  font-weight: 600;
+  color: #7a4b2b;
+  letter-spacing: 0.5px;
+}
+
+.login-card .login-title .brand-emphasis {
+  margin-top: 2px;
 }
 
 .guest-brand-main .brand-description {
@@ -754,21 +798,6 @@ button.ghost {
   position: relative;
   z-index: 1;
   text-align: center;
-}
-
-.login-mark {
-  display: inline-block;
-  margin: 0 auto 10px;
-  font-size: 12px;
-  padding: 3px 12px;
-  border: 1px solid #dec0a3;
-  color: #9a6c40;
-  background: #fff9f1;
-}
-
-.login-card h2 {
-  font-size: 40px;
-  line-height: 1.15;
 }
 
 .login-feature-list {
@@ -1881,8 +1910,9 @@ button.ghost {
     grid-template-columns: 1fr;
   }
 
-  .login-card h2 {
-    font-size: 34px;
+  .login-card .brand-emphasis {
+    font-size: 38px;
+    letter-spacing: 2px;
   }
 
   .login-decor {

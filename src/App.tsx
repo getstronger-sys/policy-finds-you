@@ -926,12 +926,6 @@ function App() {
   }, [citizenInputMode, isVoiceListening])
 
   useEffect(() => {
-    if (session) {
-      setShowLoginPopup(false)
-    }
-  }, [session])
-
-  useEffect(() => {
     if (!isHydrated) {
       return
     }
@@ -1317,7 +1311,6 @@ function App() {
     setHasSearched(false)
     setSelectedKnowledgePolicy(null)
     setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
-    setShowLoginPopup(true)
     localStorage.removeItem(SESSION_STORAGE_KEY)
   }
 
@@ -2701,7 +2694,7 @@ function App() {
             <div className="guest-brand-main">
               <img src={LOGO_SRC} alt="政策找你 logo" className="brand-logo" />
               <div>
-                <h1>政策找你</h1>
+                <h1 className="brand-emphasis">政策找你</h1>
                 <p className="brand-description">让“本该属于你”的政策权益不再错过</p>
               </div>
             </div>
@@ -2742,8 +2735,13 @@ function App() {
       {!session ? (
         <section className="card login-card">
           <div className="login-hero">
-            <span className="login-mark">CHINA · 政策找你</span>
-            <h2>欢迎进入政策找你</h2>
+            <span className="login-mark">
+              CHINA · <strong className="brand-emphasis-inline">政策找你</strong>
+            </span>
+            <h2 className="login-title">
+              <span className="login-title-prefix">欢迎进入</span>
+              <span className="brand-emphasis">政策找你</span>
+            </h2>
             <p className="hint">
               智能匹配个人与企业可享权益，一次登录即可持续记录进度，减少重复填写。
             </p>
