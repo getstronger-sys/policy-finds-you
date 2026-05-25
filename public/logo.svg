@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="20" y1="20" x2="236" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BD192E"/>
+      <stop offset="1" stop-color="#1F6FFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="20" y="20" width="216" height="216" rx="44" fill="url(#bg)"/>
+  <rect x="38" y="38" width="180" height="180" rx="32" fill="white" fill-opacity="0.14"/>
+  <text x="128" y="122" text-anchor="middle" font-size="70" font-weight="700" fill="white" font-family="Microsoft YaHei, Arial, sans-serif">政</text>
+  <text x="128" y="174" text-anchor="middle" font-size="30" font-weight="700" fill="white" letter-spacing="4" font-family="Arial, sans-serif">PFY</text>
+</svg>

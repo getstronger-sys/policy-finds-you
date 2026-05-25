@@ -21,6 +21,15 @@ const startedAt = Date.now()
 let policyCache = null
 let policyCacheAt = 0
 const policyCacheTtlMs = Number(process.env.KNOWLEDGE_CACHE_TTL_MS ?? 15000)
+const govMetrics = {
+  eventCount: 0,
+  amountTotal: 0,
+  provinceCount: new Map(),
+  policyCount: new Map(),
+  dailyCount: new Map(),
+  eventHistory: [],
+  questionHistory: [],
+}
 
 if (!isProduction) {
   app.use(cors())
@@ -154,13 +163,93 @@ function policySearchScore(item, query) {
   return score
 }
 
+function getPolicyCandidateScore(item, context) {
+  const title = String(item.title ?? '')
+  const snippet = String(item.contentSnippet ?? '')
+  const content = String(item.content ?? '')
+  const province = String(item.province ?? '')
+  const combined = `${title}\n${snippet}\n${content}\n${province}`.toLowerCase()
+  let score = 0
+
+  if (context.province) {
+    const p = context.province.toLowerCase()
+    if (province.toLowerCase().includes(p)) score += 12
+    if (combined.includes(p)) score += 4
+  }
+
+  for (const token of context.tokens) {
+    if (token.length < 2) continue
+    if (title.toLowerCase().includes(token)) score += 8
+    if (snippet.toLowerCase().includes(token)) score += 4
+    if (content.toLowerCase().includes(token)) score += 2
+    if (combined.includes(token)) score += 1
+  }
+
+  if (context.identity === 'company') {
+    if (/企业|公司|法人|经营|税|创业|招商/.test(combined)) score += 3
+  } else if (/个人|家庭|居民|人才|就业|生育|养老|社保/.test(combined)) {
+    score += 3
+  }
+  return score
+}
+
+function toTokenList(input) {
+  return String(input ?? '')
+    .toLowerCase()
+    .split(/[\s,，。;；、\/|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function buildMatchContext(profile, scenario, identity) {
+  const p = profile ?? {}
+  const tokenSource = [
+    scenario,
+    p.needPolicy,
+    p.needPolicyDetail,
+    p.personalDescription,
+    p.companyIndustry,
+    p.jobTitle,
+    p.housingNeed,
+    p.employmentStatus,
+    p.familyTag,
+    p.residence,
+    p.workPlace,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const tokens = Array.from(new Set(toTokenList(tokenSource))).slice(0, 40)
+  const province = String(p.residence || p.workPlace || '').trim()
+  return {
+    tokens,
+    province,
+    identity: identity === 'company' ? 'company' : 'citizen',
+  }
+}
+
+function buildLocalMatchRows(candidates, scenario, identity) {
+  return candidates.slice(0, 8).map((item, idx) => ({
+    name: item.title ?? '未命名政策',
+    match_level: idx < 3 ? '可能符合' : '需确认',
+    target_group: identity === 'company' ? '相关企业主体' : '相关居民群体',
+    scenario: scenario || '综合场景',
+    reason: '基于地区与关键词命中进行智能检索，建议进一步核对申报条件。',
+    benefit: item.contentSnippet ? String(item.contentSnippet).slice(0, 60) : '请查看政策原文',
+    apply_start: item.publishDate ?? '未知',
+    apply_end: item.deadlineHint ?? '未知',
+    next_step: '点击查看政策详情并按材料清单准备申报。',
+    source_url: item.url ?? '',
+    confidence: Number((0.62 - idx * 0.04).toFixed(2)),
+  }))
+}
+
 function buildPromptPayload({ profile, scenario, identity, policies }) {
-  const compactPolicies = policies.slice(0, 120).map((item) => ({
+  const compactPolicies = policies.slice(0, 80).map((item) => ({
     title: item.title,
     province: item.province ?? '',
     publishDate: toSafeDate(item.publishDate),
     deadlineHint: item.deadlineHint ?? '',
-    contentSnippet: item.contentSnippet ?? '',
+    contentSnippet: String(item.contentSnippet ?? '').slice(0, 120),
     url: item.url,
   }))
 
@@ -220,6 +309,53 @@ function buildLocalInterpretation(policy, profile) {
   }
 }
 
+function increaseMapCount(map, key, delta = 1) {
+  const normalized = String(key || '未标注').trim() || '未标注'
+  map.set(normalized, (map.get(normalized) ?? 0) + delta)
+}
+
+function buildLocalChatReply(question, profile, province, profileSummary) {
+  const text = String(question || '').trim()
+  const summary = String(profileSummary || '').trim()
+  const region = province || profile?.residence || profile?.workPlace || ''
+
+  if (!text) return '你可以告诉我你的地区、身份和想办的事，我会给你下一步建议。'
+
+  if (
+    text.includes('读取') ||
+    text.includes('能读') ||
+    text.includes('看到') ||
+    ((text.includes('填') || text.includes('写')) && (text.includes('信息') || text.includes('资料') || text.includes('画像')))
+  ) {
+    if (!summary) {
+      return '可以读取你在左侧「用户画像」里填写的内容。目前还没检测到有效字段，建议先补全地区、年龄、就业状态等。'
+    }
+    const regionHint = region ? `已选地区：${region}。` : ''
+    return `可以，我已读取你当前画像：${summary}。${regionHint}你可以继续问具体政策或办理问题。`
+  }
+
+  const mentionsBeijing = text.includes('北京')
+  const mentionsHefei = text.includes('合肥') || region.includes('合肥') || profile?.workPlace?.includes('合肥')
+  if (mentionsHefei && (mentionsBeijing || text.includes('去') || text.includes('转'))) {
+    const target = mentionsBeijing ? '北京' : '目标城市'
+    const from = profile?.workPlace || region || '合肥'
+    return `你在${from}工作、想去${target}发展，建议先确认：①${target}就业/落户政策；②社保公积金转移；③补贴申领地规则。可在本平台匹配${target}相关政策。`
+  }
+
+  if (text.includes('社保')) {
+    const months = profile?.socialSecurityMonths
+    return months
+      ? `你已填写社保 ${months}。跨地区就业时记得办理社保转移，并查询就业地人才、租房、补贴类政策。`
+      : '建议先确认社保连续缴纳月数，并优先查询就业/人才/租房相关政策。'
+  }
+  if (text.includes('补贴')) return '补贴类政策通常有申报窗口和截止时间。结合你的画像，可在平台里直接匹配相关政策。'
+  if (text.includes('电话')) return '可先查看政策卡片上的官方咨询电话，或政策原文受理部门电话。'
+  if (summary) {
+    return `结合你当前画像（${summary}），建议先在平台完成政策匹配，再把想办的具体事项告诉我（如落户、租房补贴）。`
+  }
+  return '我已收到你的问题。请先在左侧补全地区、身份和就业/家庭信息，或直接说你想办的具体事项。'
+}
+
 app.get('/api/health', async (_, res) => {
   let policyCount = 0
   try {
@@ -236,6 +372,167 @@ app.get('/api/health', async (_, res) => {
     cacheLoadedAt: policyCacheAt || null,
     uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
   })
+})
+
+app.post('/api/gov-track', (req, res) => {
+  const body = req.body ?? {}
+  const province = String(body.province ?? '未标注')
+  const policyTitle = String(body.policyTitle ?? '未标注政策').slice(0, 30)
+  const userName = String(body.userName ?? '匿名用户').slice(0, 30)
+  const amountEstimateRaw = Number(body.amountEstimate ?? 0)
+  const amountEstimate = Number.isFinite(amountEstimateRaw) ? Math.max(amountEstimateRaw, 0) : 0
+  const date = new Date().toISOString().slice(0, 10)
+
+  govMetrics.eventCount += 1
+  govMetrics.amountTotal += amountEstimate
+  increaseMapCount(govMetrics.provinceCount, province)
+  increaseMapCount(govMetrics.policyCount, policyTitle)
+  increaseMapCount(govMetrics.dailyCount, date)
+  govMetrics.eventHistory.push({
+    date,
+    province,
+    userName,
+    policyTitle,
+    amountEstimate,
+  })
+  if (govMetrics.eventHistory.length > 5000) {
+    govMetrics.eventHistory.splice(0, govMetrics.eventHistory.length - 5000)
+  }
+
+  res.json({ ok: true })
+})
+
+app.get('/api/gov-metrics', (req, res) => {
+  const startDate = String(req.query.startDate ?? '')
+  const endDate = String(req.query.endDate ?? '')
+  const hasRange = Boolean(startDate && endDate)
+  const events = hasRange
+    ? govMetrics.eventHistory.filter((item) => item.date >= startDate && item.date <= endDate)
+    : govMetrics.eventHistory
+  const questions = hasRange
+    ? govMetrics.questionHistory.filter((item) => item.date >= startDate && item.date <= endDate)
+    : govMetrics.questionHistory
+
+  const provinceMap = new Map()
+  const policyMap = new Map()
+  const dailyMap = new Map()
+  const questionMap = new Map()
+  const activeUsers = new Set()
+  const feedbackUsers = new Set()
+  let amountTotal = 0
+  for (const event of events) {
+    increaseMapCount(provinceMap, event.province)
+    increaseMapCount(policyMap, event.policyTitle)
+    increaseMapCount(dailyMap, event.date)
+    activeUsers.add(event.userName || '匿名用户')
+    amountTotal += Number(event.amountEstimate) || 0
+  }
+  for (const item of questions) {
+    increaseMapCount(questionMap, item.question)
+    feedbackUsers.add(item.userName || '匿名用户')
+  }
+
+  const provinceTop = Array.from(provinceMap.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+  const policyTop = Array.from(policyMap.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+  const dailyTrend = Array.from(dailyMap.entries())
+    .map(([date, value]) => ({ date, value }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const questionTop = Array.from(questionMap.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10)
+  const questionTotal = Array.from(questionMap.values()).reduce((sum, n) => sum + n, 0)
+  const activeUserCount = activeUsers.size
+  const feedbackUserCount = feedbackUsers.size
+  const feedbackReachRate = activeUserCount > 0 ? Math.round((feedbackUserCount / activeUserCount) * 100) : 0
+  res.json({
+    totalEvents: events.length,
+    amountTotal,
+    activeUserCount,
+    feedbackUserCount,
+    feedbackReachRate,
+    questionTotal,
+    provinceTop,
+    policyTop,
+    dailyTrend,
+    questionTop,
+    startDate: hasRange ? startDate : null,
+    endDate: hasRange ? endDate : null,
+  })
+})
+
+app.post('/api/policy-chat', async (req, res) => {
+  try {
+    const question = String(req.body?.question ?? '').trim()
+    const province = String(req.body?.province ?? '全国')
+    const userName = String(req.body?.userName ?? '匿名用户')
+    const profile = req.body?.profile ?? null
+    const profileSummary = String(req.body?.profileSummary ?? '').trim()
+    if (!question) {
+      res.status(400).json({ error: '问题不能为空。' })
+      return
+    }
+    const date = new Date().toISOString().slice(0, 10)
+    govMetrics.questionHistory.push({
+      date,
+      province,
+      userName,
+      question: question.slice(0, 80),
+    })
+    if (govMetrics.questionHistory.length > 5000) {
+      govMetrics.questionHistory.splice(0, govMetrics.questionHistory.length - 5000)
+    }
+
+    const localAnswer = () => buildLocalChatReply(question, profile, province, profileSummary)
+
+    if (!deepseekApiKey) {
+      res.json({ answer: localAnswer(), mode: 'fallback' })
+      return
+    }
+
+    const profileJson = profile ? JSON.stringify(profile) : '{}'
+    const userPrompt = `用户问题：${question}
+当前地区：${province}
+用户画像摘要：${profileSummary || '（尚未填写）'}
+用户画像详情：${profileJson}
+请结合用户已填信息作答。若用户问能否读取信息，请明确列出已读取字段。回答简洁中文，不超过150字。`
+    const llmResponse = await fetch(`${deepseekBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${deepseekApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: deepseekModel,
+        temperature: 0.3,
+        messages: [
+          {
+            role: 'system',
+            content: '你是政务政策咨询助手。必须结合用户画像作答，不要重复同一句套话，回答清晰、简洁、可执行。',
+          },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    })
+    if (!llmResponse.ok) {
+      res.json({ answer: localAnswer(), mode: 'fallback', error: 'DeepSeek unavailable' })
+      return
+    }
+    const llmJson = await llmResponse.json()
+    const answer = String(llmJson?.choices?.[0]?.message?.content ?? '').trim()
+    res.json({ answer: answer || localAnswer(), mode: 'llm' })
+  } catch (error) {
+    res.status(500).json({
+      error: '政策AI对话服务异常。',
+      detail: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
 })
 
 app.get('/api/policy-search', async (req, res) => {
@@ -288,13 +585,6 @@ app.get('/api/policy-search', async (req, res) => {
 
 app.post('/api/match-policy', async (req, res) => {
   try {
-    if (!deepseekApiKey) {
-      res.status(400).json({
-        error: 'Missing DEEPSEEK_API_KEY. Add it to .env first.',
-      })
-      return
-    }
-
     const { profile, scenario = '全部', identity = 'citizen' } = req.body ?? {}
     if (!profile || typeof profile !== 'object') {
       res.status(400).json({ error: 'Invalid profile payload.' })
@@ -302,12 +592,31 @@ app.post('/api/match-policy', async (req, res) => {
     }
 
     const allPolicies = await loadPolicies()
+    const matchContext = buildMatchContext(profile, scenario, identity)
+    const rankedCandidates = allPolicies
+      .map((item) => ({
+        item,
+        score: getPolicyCandidateScore(item, matchContext),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item)
+    const selectedCandidates = rankedCandidates.slice(0, 80)
     const payload = buildPromptPayload({
       profile,
       scenario,
       identity,
-      policies: allPolicies,
+      policies: selectedCandidates,
     })
+
+    if (!deepseekApiKey) {
+      res.json({
+        sourceCount: allPolicies.length,
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        mode: 'fallback',
+        error: 'Missing DEEPSEEK_API_KEY. Using local matcher.',
+      })
+      return
+    }
 
     const systemPrompt =
       '你是政策匹配助手。只能基于给定政策候选进行匹配，不要虚构政策。返回严格 JSON。'
@@ -342,7 +651,10 @@ ${JSON.stringify(payload, null, 2)}
 
     if (!llmResponse.ok) {
       const detail = await llmResponse.text()
-      res.status(502).json({
+      res.json({
+        sourceCount: allPolicies.length,
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        mode: 'fallback',
         error: 'DeepSeek API request failed.',
         detail: detail.slice(0, 500),
       })
@@ -354,16 +666,21 @@ ${JSON.stringify(payload, null, 2)}
     const parsed = parseJsonFromLLM(content)
 
     if (!parsed || !Array.isArray(parsed.matched_policies)) {
-      res.status(502).json({
-        error: 'Failed to parse DeepSeek JSON output.',
-        detail: content.slice(0, 500),
+      res.json({
+        sourceCount: allPolicies.length,
+        matched_policies: buildLocalMatchRows(selectedCandidates, scenario, identity),
+        mode: 'fallback',
+        detail: 'Failed to parse DeepSeek JSON output.',
       })
       return
     }
 
+    const rows = parsed.matched_policies.filter((item) => item && typeof item === 'object')
+    const safeRows = rows.length > 0 ? rows : buildLocalMatchRows(selectedCandidates, scenario, identity)
     res.json({
       sourceCount: allPolicies.length,
-      matched_policies: parsed.matched_policies,
+      matched_policies: safeRows,
+      mode: rows.length > 0 ? 'llm' : 'fallback',
     })
   } catch (error) {
     res.status(500).json({
