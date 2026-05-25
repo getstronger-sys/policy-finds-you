@@ -747,6 +747,8 @@ function App() {
   const [qaIndex, setQaIndex] = useState(0)
   const [voiceError, setVoiceError] = useState('')
   const [isVoiceListening, setIsVoiceListening] = useState(false)
+  const [naturalLanguageHint, setNaturalLanguageHint] = useState('')
+  const voiceTranscriptRef = useRef('')
   const [aiMatchedPolicies, setAiMatchedPolicies] = useState<PolicyCard[] | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
@@ -1100,38 +1102,41 @@ function App() {
     clearStructuredProfileForNaturalLanguage(false)
   }
 
+  const createBlankProfileForNaturalLanguage = (prev: UserProfile, freeText: string): UserProfile => ({
+    ...prev,
+    age: '',
+    gender: prev.identity === 'citizen' ? '' : prev.gender,
+    maritalStatus: '',
+    educationLevel: '',
+    birthPlace: '',
+    hukou: selectedProvince || prev.hukou || '',
+    residence: selectedProvince || prev.residence || '',
+    workPlace: selectedProvince || prev.workPlace || '',
+    childrenCount: '',
+    employmentStatus: '',
+    housingNeed: '',
+    policyNeed: '',
+    socialSecurityMonths: '',
+    providentFundMonths: '',
+    familyTag: '',
+    disabilityStatus: '',
+    veteranStatus: '',
+    lowIncomeStatus: '',
+    companyIndustry: '',
+    employeeCount: '',
+    companyStage: '',
+    annualTaxBracket: '',
+    hasSecondChild: false,
+    annualIncome: '',
+    freeText,
+  })
+
   const clearStructuredProfileForNaturalLanguage = (keepFreeText = false) => {
-    setProfile((prev) => ({
-      ...prev,
-      age: '',
-      gender: prev.identity === 'citizen' ? '' : prev.gender,
-      maritalStatus: '',
-      educationLevel: '',
-      birthPlace: '',
-      hukou: selectedProvince || prev.hukou || '',
-      residence: selectedProvince || prev.residence || '',
-      workPlace: selectedProvince || prev.workPlace || '',
-      childrenCount: '',
-      employmentStatus: '',
-      housingNeed: '',
-      policyNeed: '',
-      socialSecurityMonths: '',
-      providentFundMonths: '',
-      familyTag: '',
-      disabilityStatus: '',
-      veteranStatus: '',
-      lowIncomeStatus: '',
-      companyIndustry: '',
-      employeeCount: '',
-      companyStage: '',
-      annualTaxBracket: '',
-      hasSecondChild: false,
-      annualIncome: '',
-      freeText: keepFreeText ? prev.freeText : '',
-    }))
+    setProfile((prev) => createBlankProfileForNaturalLanguage(prev, keepFreeText ? prev.freeText : ''))
     setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
     setSelectedScenario('全部')
     setAiMatchedPolicies(null)
+    setNaturalLanguageHint('')
   }
 
   const switchCitizenInputMode = (mode: CitizenInputMode) => {
@@ -1150,32 +1155,44 @@ function App() {
     setCitizenInputMode(mode)
   }
 
+  const parseMonthsFromDuration = (amountText: string, unit: string) => {
+    const amount = Number(amountText)
+    if (!Number.isFinite(amount)) return ''
+    return unit === '年' ? `${Math.round(amount * 12)}个月` : `${amountText}个月`
+  }
+
   const parseNaturalLanguageProfile = (text: string, base: UserProfile): UserProfile => {
     const next: UserProfile = { ...base, freeText: text }
-    const ageMatch = text.match(/(\d{1,3})\s*岁/)
+    const ageMatch =
+      text.match(/(\d{1,3})\s*岁/) ??
+      text.match(/(\d{1,3})\s*周岁/) ??
+      text.match(/今年\s*(\d{1,3})/)
     if (ageMatch) next.age = ageMatch[1]
-    const cityMatch = text.match(/在([^，,。；;\s]{2,10}?)(工作|生活|居住|上班)/)
+    const cityMatch =
+      text.match(/在([^，,。；;\s]{2,10}?)(工作|生活|居住|上班|打工)/) ??
+      text.match(/([^，,。；;\s]{2,8}?)(?:市|区|县)(?:工作|生活|居住|上班)/)
     if (cityMatch) {
       next.workPlace = cityMatch[1]
       next.residence = cityMatch[1]
+    } else if (selectedProvince) {
+      next.residence = selectedProvince
+      next.workPlace = selectedProvince
     }
-    const socialSecurityMatch = text.match(/社保(?:连续)?(?:缴纳|已缴)?(\d+(?:\.\d+)?)\s*(年|个月)/)
+    const socialSecurityMatch =
+      text.match(/社保(?:连续)?(?:缴纳|已缴|交了)?(\d+(?:\.\d+)?)\s*(年|个月)/) ??
+      text.match(/(?:缴纳|交了)(?:了)?(\d+(?:\.\d+)?)\s*(年|个月).*?社保/) ??
+      text.match(/社保.*?(\d+(?:\.\d+)?)\s*(年|个月)/)
     if (socialSecurityMatch) {
-      const amount = Number(socialSecurityMatch[1])
-      next.socialSecurityMonths =
-        socialSecurityMatch[2] === '年' && Number.isFinite(amount)
-          ? `${Math.round(amount * 12)}个月`
-          : `${socialSecurityMatch[1]}个月`
+      next.socialSecurityMonths = parseMonthsFromDuration(socialSecurityMatch[1], socialSecurityMatch[2])
     } else if (text.includes('社保')) {
       next.socialSecurityMonths = '已缴纳'
     }
-    const providentFundMatch = text.match(/公积金(?:连续)?(?:缴纳|已缴)?(\d+(?:\.\d+)?)\s*(年|个月)/)
+    const providentFundMatch =
+      text.match(/公积金(?:连续)?(?:缴纳|已缴|交了)?(\d+(?:\.\d+)?)\s*(年|个月)/) ??
+      text.match(/(?:缴纳|交了)(?:了)?(\d+(?:\.\d+)?)\s*(年|个月).*?公积金/) ??
+      text.match(/公积金.*?(\d+(?:\.\d+)?)\s*(年|个月)/)
     if (providentFundMatch) {
-      const amount = Number(providentFundMatch[1])
-      next.providentFundMonths =
-        providentFundMatch[2] === '年' && Number.isFinite(amount)
-          ? `${Math.round(amount * 12)}个月`
-          : `${providentFundMatch[1]}个月`
+      next.providentFundMonths = parseMonthsFromDuration(providentFundMatch[1], providentFundMatch[2])
     } else if (text.includes('公积金')) {
       next.providentFundMonths = '已缴纳'
     }
@@ -1185,13 +1202,26 @@ function App() {
     if (text.includes('退休')) next.employmentStatus = '退休'
     if (text.includes('购房')) next.housingNeed = '购房'
     if (text.includes('租房')) next.housingNeed = '租房'
-    if (text.includes('已婚')) next.maritalStatus = '已婚'
-    if (text.includes('未婚')) next.maritalStatus = '未婚'
     if (text.includes('二孩') || text.includes('两个孩子')) {
       next.hasSecondChild = true
       next.childrenCount = '2'
       next.familyTag = '二孩家庭'
+    } else {
+      const childrenMatch = text.match(/([两二2-9\d]+)\s*个?(?:孩子|娃|子女)/)
+      if (childrenMatch) {
+        const countText = childrenMatch[1]
+        const count = countText === '两' || countText === '二' ? '2' : countText
+        next.childrenCount = count
+        if (count === '2') {
+          next.hasSecondChild = true
+          next.familyTag = '二孩家庭'
+        }
+      }
     }
+    if (text.includes('已婚') || text.includes('结婚了')) next.maritalStatus = '已婚'
+    if (text.includes('未婚')) next.maritalStatus = '未婚'
+    if (text.includes('女') && !text.includes('男女')) next.gender = '女'
+    if (text.includes('男') && !text.includes('男女')) next.gender = '男'
     if (text.includes('低保')) next.lowIncomeStatus = '是'
     if (text.includes('残疾')) next.disabilityStatus = '是'
     if (text.includes('退役')) next.veteranStatus = '是'
@@ -1262,39 +1292,24 @@ function App() {
   )
   const currentQaQuestion = citizenQaQuestions[Math.min(qaIndex, citizenQaQuestions.length - 1)]
 
-  const applyNaturalLanguageToProfile = () => {
-    const text = profile.freeText.trim()
-    if (!text) return
-    setProfile((prev) => {
-      const base: UserProfile = {
-        ...prev,
-        age: '',
-        gender: '',
-        maritalStatus: '',
-        educationLevel: '',
-        birthPlace: '',
-        hukou: selectedProvince || prev.hukou || '',
-        residence: selectedProvince || prev.residence || '',
-        workPlace: selectedProvince || prev.workPlace || '',
-        childrenCount: '',
-        employmentStatus: '',
-        housingNeed: '',
-        policyNeed: '',
-        socialSecurityMonths: '',
-        providentFundMonths: '',
-        familyTag: '',
-        disabilityStatus: '',
-        veteranStatus: '',
-        lowIncomeStatus: '',
-        hasSecondChild: false,
-        annualIncome: '',
-        freeText: text,
-      }
-      return parseNaturalLanguageProfile(text, base)
-    })
+  const handleNaturalLanguageTextChange = (text: string) => {
+    setProfile((prev) => createBlankProfileForNaturalLanguage(prev, text))
+    setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
+    setNaturalLanguageHint('')
+  }
+
+  const applyNaturalLanguageFromText = (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setProfile((prev) => parseNaturalLanguageProfile(trimmed, createBlankProfileForNaturalLanguage(prev, trimmed)))
     setReviewInputs({ socialSecurityMonths: '', familyTag: '', enterpriseType: '' })
     setSelectedScenario('全部')
     setAiMatchedPolicies(null)
+    setNaturalLanguageHint('已根据你的描述更新画像标签，请查看下方标签。')
+  }
+
+  const applyNaturalLanguageToProfile = () => {
+    applyNaturalLanguageFromText(profile.freeText)
   }
 
   const stopVoiceInput = () => {
@@ -1308,6 +1323,9 @@ function App() {
 
   const startVoiceInput = () => {
     setVoiceError('')
+    setNaturalLanguageHint('')
+    clearStructuredProfileForNaturalLanguage(false)
+    voiceTranscriptRef.current = ''
     if (typeof window === 'undefined') {
       setVoiceError('当前环境不支持语音输入。')
       return
@@ -1323,10 +1341,12 @@ function App() {
     recognition.continuous = true
     recognition.onresult = (event: any) => {
       let transcript = ''
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      for (let i = 0; i < event.results.length; i += 1) {
         transcript += event.results[i][0].transcript
       }
-      updateProfileField('freeText', transcript.trim())
+      const trimmed = transcript.trim()
+      voiceTranscriptRef.current = trimmed
+      handleNaturalLanguageTextChange(trimmed)
     }
     recognition.onerror = () => {
       setVoiceError('语音识别失败，请检查麦克风权限或改用文本输入。')
@@ -1335,6 +1355,10 @@ function App() {
     recognition.onend = () => {
       setIsVoiceListening(false)
       voiceRecognitionRef.current = null
+      const transcript = voiceTranscriptRef.current.trim()
+      if (transcript) {
+        applyNaturalLanguageFromText(transcript)
+      }
     }
     recognition.start()
     voiceRecognitionRef.current = recognition
@@ -3221,7 +3245,7 @@ function App() {
                     <textarea
                       rows={5}
                       value={profile.freeText}
-                      onChange={(event) => updateProfileField('freeText', event.target.value)}
+                      onChange={(event) => handleNaturalLanguageTextChange(event.target.value)}
                       placeholder="例如：我在杭州工作，32岁，已婚有二孩，社保连续缴纳两年，想申请租房补贴。"
                     />
                     <div className="policy-actions">
@@ -3229,11 +3253,12 @@ function App() {
                         帮我自动填写
                       </button>
                     </div>
+                    {naturalLanguageHint && <p className="hint success-hint">{naturalLanguageHint}</p>}
                   </div>
                 )}
                 {citizenInputMode === 'voice' && (
                   <div className="full-row profile-mode-panel">
-                    <p className="hint">点“开始说话”后直接讲你的情况，系统会转成文字并自动填写关键信息。</p>
+                    <p className="hint">点“开始说话”后直接讲你的情况，说完会自动整理成画像标签；也可手动点「自动整理成表单」。</p>
                     <div className="policy-actions">
                       <button type="button" onClick={isVoiceListening ? stopVoiceInput : startVoiceInput}>
                         {isVoiceListening ? '先停一下' : '开始说话'}
@@ -3243,10 +3268,11 @@ function App() {
                       </button>
                     </div>
                     {voiceError && <p className="empty-tip">{voiceError}</p>}
+                    {naturalLanguageHint && <p className="hint success-hint">{naturalLanguageHint}</p>}
                     <textarea
                       rows={5}
                       value={profile.freeText}
-                      onChange={(event) => updateProfileField('freeText', event.target.value)}
+                      onChange={(event) => handleNaturalLanguageTextChange(event.target.value)}
                       placeholder="你说的话会显示在这里，也可以自己改。"
                     />
                   </div>

@@ -452,6 +452,11 @@
   color: #866b50;
 }
 
+.success-hint {
+  color: #166534;
+  font-weight: 500;
+}
+
 .map-layout {
   margin-top: 16px;
   display: grid;
