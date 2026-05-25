@@ -40,6 +40,147 @@ const govMetrics = {
   questionHistory: [],
 }
 
+function createSeededRandom(seed = 20260525) {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), 1 | state)
+    t = (Math.imul(t ^ (t >>> 7), 61 | t) ^ t) >>> 0
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function formatDateOffset(daysAgo) {
+  const date = new Date()
+  date.setHours(12, 0, 0, 0)
+  date.setDate(date.getDate() - daysAgo)
+  return date.toISOString().slice(0, 10)
+}
+
+function pickWeightedItem(items, rand) {
+  const total = items.reduce((sum, item) => sum + item.weight, 0)
+  let cursor = rand() * total
+  for (const item of items) {
+    cursor -= item.weight
+    if (cursor <= 0) return item
+  }
+  return items[items.length - 1]
+}
+
+function seedGovMetricsDemoData() {
+  if (govMetrics.eventHistory.length > 0) return
+  if (String(process.env.GOV_SEED_DEMO ?? 'true').toLowerCase() === 'false') return
+
+  const rand = createSeededRandom()
+  const provinces = [
+    { name: '北京', weight: 12 },
+    { name: '上海', weight: 11 },
+    { name: '广东', weight: 10 },
+    { name: '浙江', weight: 9 },
+    { name: '江苏', weight: 9 },
+    { name: '四川', weight: 7 },
+    { name: '湖北', weight: 6 },
+    { name: '河南', weight: 6 },
+    { name: '山东', weight: 6 },
+    { name: '湖南', weight: 5 },
+    { name: '安徽', weight: 5 },
+    { name: '福建', weight: 5 },
+    { name: '重庆', weight: 4 },
+    { name: '陕西', weight: 4 },
+    { name: '天津', weight: 3 },
+    { name: '河北', weight: 3 },
+    { name: '辽宁', weight: 3 },
+    { name: '江西', weight: 2 },
+    { name: '广西', weight: 2 },
+    { name: '云南', weight: 2 },
+    { name: '贵州', weight: 2 },
+    { name: '山西', weight: 2 },
+    { name: '吉林', weight: 2 },
+    { name: '黑龙江', weight: 2 },
+    { name: '新疆', weight: 2 },
+    { name: '内蒙古', weight: 1 },
+    { name: '海南', weight: 1 },
+    { name: '甘肃', weight: 1 },
+    { name: '宁夏', weight: 1 },
+    { name: '青海', weight: 1 },
+    { name: '西藏', weight: 1 },
+  ]
+  const policies = [
+    { title: '青年人才租房补贴', amount: 12000 },
+    { title: '高校毕业生就业补贴', amount: 8000 },
+    { title: '职业技能培训补贴', amount: 3500 },
+    { title: '创业担保贷款贴息', amount: 50000 },
+    { title: '高新技术企业认定奖励', amount: 200000 },
+    { title: '育儿补贴与产假支持', amount: 10000 },
+    { title: '以旧换新消费补贴', amount: 2000 },
+    { title: '灵活就业人员社保补贴', amount: 6000 },
+    { title: '残疾人岗位补贴', amount: 4800 },
+    { title: '小微企业稳岗返还', amount: 15000 },
+  ]
+  const users = [
+    '张明',
+    '李华',
+    '王芳',
+    '刘洋',
+    '陈静',
+    '赵磊',
+    '孙悦',
+    '周杰',
+    '吴敏',
+    '郑涛',
+    '微信用户',
+    '游客用户',
+  ]
+  const questions = [
+    '我在合肥工作，社保一年，能申请什么补贴？',
+    '毕业生租房补贴怎么申请？',
+    '小微企业有哪些税收优惠政策？',
+    '创业担保贷款需要什么材料？',
+    '育儿补贴和产假政策怎么查？',
+    '灵活就业怎么缴社保更划算？',
+    '以旧换新补贴在哪里领取？',
+    '高新技术企业认定条件是什么？',
+    '残疾人就业有哪些扶持？',
+    '稳岗返还政策怎么匹配？',
+  ]
+
+  let amountTotal = 0
+  for (let day = 29; day >= 0; day -= 1) {
+    const date = formatDateOffset(day)
+    const dailyEvents = 10 + Math.floor(rand() * 14) + (day < 7 ? 6 : 0)
+    for (let index = 0; index < dailyEvents; index += 1) {
+      const province = pickWeightedItem(provinces, rand).name
+      const policy = policies[Math.min(policies.length - 1, Math.floor(rand() * policies.length))]
+      const userName = users[Math.min(users.length - 1, Math.floor(rand() * users.length))]
+      const amountEstimate = Math.round(policy.amount * (0.85 + rand() * 0.3))
+      govMetrics.eventHistory.push({
+        date,
+        province,
+        userName,
+        policyTitle: policy.title.slice(0, 30),
+        amountEstimate,
+      })
+      govMetrics.eventCount += 1
+      amountTotal += amountEstimate
+      increaseMapCount(govMetrics.provinceCount, province)
+      increaseMapCount(govMetrics.policyCount, policy.title)
+      increaseMapCount(govMetrics.dailyCount, date)
+    }
+  }
+  govMetrics.amountTotal = amountTotal
+
+  for (let day = 29; day >= 0; day -= 1) {
+    const date = formatDateOffset(day)
+    const dailyQuestions = rand() > 0.35 ? 1 + Math.floor(rand() * 3) : 0
+    for (let index = 0; index < dailyQuestions; index += 1) {
+      const province = pickWeightedItem(provinces, rand).name
+      const userName = users[Math.min(users.length - 1, Math.floor(rand() * users.length))]
+      const question = questions[Math.min(questions.length - 1, Math.floor(rand() * questions.length))]
+      govMetrics.questionHistory.push({ date, province, userName, question })
+    }
+  }
+}
+
 if (!isProduction) {
   app.use(cors())
 }
@@ -394,6 +535,8 @@ function increaseMapCount(map, key, delta = 1) {
   const normalized = String(key || '未标注').trim() || '未标注'
   map.set(normalized, (map.get(normalized) ?? 0) + delta)
 }
+
+seedGovMetricsDemoData()
 
 function buildLocalChatReply(question, profile, province, profileSummary) {
   const text = String(question || '').trim()

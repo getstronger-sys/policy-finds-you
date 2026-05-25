@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactECharts from 'echarts-for-react'
 import * as echarts from 'echarts'
 import QRCode from 'qrcode'
@@ -706,7 +707,6 @@ function App() {
   const [session, setSession] = useState<UserSession | null>(null)
   const [mainTab, setMainTab] = useState<MainTab>('match')
   const [nicknameInput, setNicknameInput] = useState('')
-  const [showLoginPopup, setShowLoginPopup] = useState(true)
   const [showDailyBrief, setShowDailyBrief] = useState(false)
   const [dailyBrief, setDailyBrief] = useState<DailyUpdateBrief | null>(null)
   const [isHydrated, setIsHydrated] = useState(false)
@@ -1856,7 +1856,7 @@ function App() {
   const govOptimizationAdvice = useMemo(() => {
     const top = govStepBottlenecks[0]
     if (!top) {
-      return '当前暂无明显卡点，可继续跟踪新增代办。'
+      return '当前暂无明显卡点，可继续跟踪新增待办。'
     }
     if (top.step.includes('资格')) {
       return `当前最卡在「${top.step}」（${top.ratio}%）。建议政府侧统一资格口径，提供自动资格预审工具，减少群众反复咨询。`
@@ -2042,7 +2042,7 @@ function App() {
   const govDashboardContent = (
     <section className="card">
       <h2>政府驾驶舱（数据分析页）</h2>
-      <p className="hint">汇总用户侧代办与收藏行为，形成地区热度、政策关注度与资金规模的分析视图。</p>
+      <p className="hint">汇总用户侧待办与收藏行为，形成地区热度、政策关注度与资金规模的分析视图。</p>
       <div className="gov-toolbar">
         <div className="gov-range-switch" role="group" aria-label="时间范围筛选">
           <button
@@ -2095,7 +2095,7 @@ function App() {
           <p className="policy-value">{govMetrics?.totalEvents ?? filteredTodoForGov.length + filteredFavoriteForGov.length} 次</p>
         </article>
         <article className="detail-quick-item">
-          <p className="policy-label">代办完成率</p>
+          <p className="policy-label">待办完成率</p>
           <p className="policy-value">{govConversionRate}%</p>
         </article>
         <article className="detail-quick-item">
@@ -2110,7 +2110,7 @@ function App() {
         <article className="detail-quick-item">
           <p className="policy-label">政策转化率</p>
           <p className="policy-value">{govConversionRate}%</p>
-          <p className="search-hint">完成代办 / 全部代办</p>
+          <p className="search-hint">完成待办 / 全部待办</p>
         </article>
         <article className="detail-quick-item">
           <p className="policy-label">资金使用进度</p>
@@ -2160,7 +2160,7 @@ function App() {
         </div>
       </section>
       <section className="progress-section">
-        <h4>代办卡点统计（政府优化重点）</h4>
+        <h4>待办卡点统计（政府优化重点）</h4>
         {govStepBottlenecks.length > 0 ? (
           <div className="material-list">
             {govStepBottlenecks.map((item) => (
@@ -2171,7 +2171,7 @@ function App() {
             ))}
           </div>
         ) : (
-          <p className="search-hint">当前时间范围内暂无进行中的代办。</p>
+          <p className="search-hint">当前时间范围内暂无进行中的待办。</p>
         )}
         <p className="template-preview">优化建议：{govOptimizationAdvice}</p>
       </section>
@@ -2218,6 +2218,414 @@ function App() {
     </section>
   )
 
+
+  const appOverlays =
+    !isGovStandalone && session
+      ? createPortal(
+          <>
+          <button type="button" className="ai-fab" onClick={() => setChatOpen((prev) => !prev)}>
+            {chatOpen ? '收起咨询' : 'AI 问一问'}
+          </button>
+          {chatOpen && (
+            <aside className="ai-chat-panel" role="dialog" aria-label="政策AI咨询">
+              <div className="ai-chat-head">
+                <strong>政策AI咨询</strong>
+                <button type="button" className="ghost mini-btn" onClick={() => setChatOpen(false)}>
+                  关闭
+                </button>
+              </div>
+              <div className="ai-chat-body">
+                {chatMessages.map((message) => (
+                  <article key={`${message.role}-${message.createdAt}-${message.content.slice(0, 10)}`} className={`ai-msg ${message.role}`}>
+                    <p>{message.content}</p>
+                  </article>
+                ))}
+              </div>
+              <div className="ai-chat-input">
+                <textarea
+                  rows={2}
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="例如：我在合肥工作，社保一年，能申请什么补贴？"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void sendChatMessage()
+                    }
+                  }}
+                />
+                <button type="button" onClick={() => void sendChatMessage()} disabled={chatLoading}>
+                  {chatLoading ? '发送中...' : '发送'}
+                </button>
+              </div>
+            </aside>
+          )}
+        
+      <section
+        className={`interpret-modal ${selectedPolicy ? 'open' : ''}`}
+        onClick={closeInterpretation}
+      >
+        <div className="interpret-panel" onClick={(event) => event.stopPropagation()}>
+          <div className="interpret-header">
+            <h3>政策解读</h3>
+            <button type="button" className="ghost" onClick={closeInterpretation}>
+              关闭
+            </button>
+          </div>
+          {selectedPolicy && (
+            <div className="interpret-body">
+              <p className="interpret-policy-name">{selectedPolicy.name}</p>
+              {interpretLoading && <p>解读生成中...</p>}
+              {interpretError && <p className="empty-tip">{interpretError}</p>}
+              {!interpretLoading && !interpretError && (
+                <>
+                  <div className="detail-quick-grid">
+                    <div className="detail-quick-item">
+                      <p className="policy-label">申请对象</p>
+                      <p className="policy-value">{selectedPolicy.targetGroup}</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">办理渠道</p>
+                      <p className="policy-value">优先线上办理；无法线上提交时前往本地政务服务窗口。</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">可享权益</p>
+                      <p className="policy-value">{selectedPolicy.benefit}</p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">时间信息</p>
+                      <p className="policy-value">
+                        申报窗口：{selectedPolicy.applyStart} 至 {selectedPolicy.applyEnd}（{getPolicyStatus(selectedPolicy.applyStart, selectedPolicy.applyEnd)}）
+                      </p>
+                    </div>
+                    <div className="detail-quick-item">
+                      <p className="policy-label">官方咨询</p>
+                      <p className="policy-value">{selectedPolicy.officialPhone || getOfficialPhone(selectedProvince || profile.residence || '全国')}</p>
+                    </div>
+                  </div>
+                  <section>
+                    <h4>政策说明</h4>
+                    <p>
+                      {policyInterpretation?.summary ||
+                        buildFriendlyPolicyMessage(selectedPolicy.name, selectedPolicy.reason)}
+                    </p>
+                  </section>
+                  <section className="progress-section">
+                    <h4>资格判断结果</h4>
+                    <div className="apply-score-row">
+                      <span>当前匹配度</span>
+                      <div className="heat-bar" aria-hidden="true">
+                        <span style={{ width: `${checkScore}%` }} />
+                      </div>
+                      <strong>{checkScore}分</strong>
+                    </div>
+                    <div className="score-dial-wrap">
+                      <div
+                        className="score-dial"
+                        style={{ ['--score' as string]: `${checkScore}` }}
+                        aria-label={`当前匹配度${checkScore}分`}
+                      >
+                        <span>{checkScore}</span>
+                      </div>
+                    </div>
+                    <p className="search-hint">
+                      已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
+                    </p>
+                    <div className="eligibility-list">
+                      {eligibilityChecks.map((check) => (
+                        <article key={`interpret-${check.key}`} className={`eligibility-item ${check.status}`}>
+                          <div className="eligibility-head">
+                            <p className="policy-label">{check.label}</p>
+                            <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
+                          </div>
+                          <p className="policy-value">{check.detail}</p>
+                          {check.options && check.options.length > 0 && (
+                            <div className="quick-option-row">
+                              {check.options.map((option) => (
+                                <button
+                                  key={`interpret-${check.key}-${option}`}
+                                  type="button"
+                                  className="ghost quick-option-btn"
+                                  onClick={() => applyQuickOption(check.key, option)}
+                                >
+                                  选“{option}”
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="progress-section">
+                    <h4>申领路径</h4>
+                    <div className="step-track">
+                      {(policyInterpretation?.checklist?.length
+                        ? policyInterpretation.checklist.map((item) => ({ title: `步骤`, desc: item }))
+                        : buildApplicationSteps(profile.identity === 'company')
+                      ).map((step, idx) => (
+                        <article key={`interpret-step-${idx}-${step.desc}`} className="step-node">
+                          <span className="step-index">{idx + 1}</span>
+                          <div>
+                            <p className="policy-label">{step.title || `步骤 ${idx + 1}`}</p>
+                            <p className="policy-value">{step.desc}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                  <section>
+                    <h4>材料准备与模板</h4>
+                    <div className="material-list">
+                      {materialList.map((item) => (
+                        <article key={`interpret-${item.name}`} className="material-card">
+                          <p className="policy-label">{item.name}</p>
+                          <p className="policy-value">{item.tip}</p>
+                          <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                            查看办理入口
+                          </a>
+                        </article>
+                      ))}
+                    </div>
+                    <p className="template-preview">
+                      模板示例：本人/本企业拟申请《{selectedPolicy.name}》，已确认身份为“
+                      {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
+                      所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
+                    </p>
+                  </section>
+                  <section>
+                    <h4>可享福利提示</h4>
+                    <p>{selectedPolicy.benefit}</p>
+                    <span className="official-phone-tag">
+                      {selectedPolicy.officialPhone || getOfficialPhone(selectedProvince || profile.residence || '全国')}
+                    </span>
+                    {selectedPolicy.sourceUrl && (
+                      <a href={selectedPolicy.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
+                        打开官网原文
+                      </a>
+                    )}
+                  </section>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+      <section
+        className={`knowledge-modal ${selectedKnowledgePolicy ? 'open' : ''}`}
+        onClick={closeKnowledgePolicy}
+      >
+        <div className="knowledge-panel" onClick={(event) => event.stopPropagation()}>
+          <div className="interpret-header">
+            <h3>政策详情可视化解读</h3>
+            <button type="button" className="ghost" onClick={closeKnowledgePolicy}>
+              关闭
+            </button>
+          </div>
+          {selectedKnowledgePolicy && (
+            <div className="interpret-body">
+              <p className="interpret-policy-name">{selectedKnowledgePolicy.title}</p>
+              <div className="detail-quick-grid">
+                <div className="detail-quick-item">
+                  <p className="policy-label">申请对象</p>
+                  <p className="policy-value">
+                    {summarizeAudience(selectedKnowledgePolicy.title, profile)}
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">办理渠道</p>
+                  <p className="policy-value">
+                    线上政务服务网可申报；材料复杂时建议去本地政务服务中心窗口提交。
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">可享权益</p>
+                  <p className="policy-value">
+                    {getBenefitPreview(selectedKnowledgePolicy)}
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">时间信息</p>
+                  <p className="policy-value">
+                    发布日期：{selectedKnowledgePolicy.publishDate || '未知'}
+                    {selectedKnowledgePolicy.deadlineHint ? `；${selectedKnowledgePolicy.deadlineHint}` : ''}
+                  </p>
+                </div>
+                <div className="detail-quick-item">
+                  <p className="policy-label">官方咨询</p>
+                  <p className="policy-value">{getOfficialPhone(selectedKnowledgePolicy.province)}</p>
+                </div>
+              </div>
+              <section>
+                <h4>政策说明</h4>
+                <p>{buildFriendlyPolicyMessage(selectedKnowledgePolicy.title, selectedKnowledgePolicy.contentSnippet)}</p>
+              </section>
+              <section className="progress-section">
+                <h4>资格判断结果</h4>
+                <div className="apply-score-row">
+                  <span>当前匹配度</span>
+                  <div className="heat-bar" aria-hidden="true">
+                    <span style={{ width: `${checkScore}%` }} />
+                  </div>
+                  <strong>{checkScore}分</strong>
+                </div>
+                <div className="score-dial-wrap">
+                  <div
+                    className="score-dial"
+                    style={{ ['--score' as string]: `${checkScore}` }}
+                    aria-label={`当前匹配度${checkScore}分`}
+                  >
+                    <span>{checkScore}</span>
+                  </div>
+                </div>
+                <p className="search-hint">
+                  已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
+                </p>
+                <div className="eligibility-list">
+                  {eligibilityChecks.map((check) => (
+                    <article key={check.key} className={`eligibility-item ${check.status}`}>
+                      <div className="eligibility-head">
+                        <p className="policy-label">{check.label}</p>
+                        <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
+                      </div>
+                      <p className="policy-value">{check.detail}</p>
+                      {check.options && check.options.length > 0 && (
+                        <div className="quick-option-row">
+                          {check.options.map((option) => (
+                            <button
+                              key={`${check.key}-${option}`}
+                              type="button"
+                              className="ghost quick-option-btn"
+                              onClick={() => applyQuickOption(check.key, option)}
+                            >
+                              选“{option}”
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+              <section className="progress-section">
+                <h4>申领路径</h4>
+                <div className="step-track">
+                  {buildApplicationSteps(profile.identity === 'company').map((step, idx) => (
+                    <article key={step.title} className="step-node">
+                      <span className="step-index">{idx + 1}</span>
+                      <div>
+                        <p className="policy-label">{step.title}</p>
+                        <p className="policy-value">{step.desc}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <h4>材料准备与模板</h4>
+                <div className="material-list">
+                  {materialList.map((item) => (
+                    <article key={item.name} className="material-card">
+                      <p className="policy-label">{item.name}</p>
+                      <p className="policy-value">{item.tip}</p>
+                      <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                        查看办理入口
+                      </a>
+                    </article>
+                  ))}
+        </div>
+                <p className="template-preview">
+                  模板示例：本人/本企业拟申请《{selectedKnowledgePolicy.title}》，已确认身份为“
+                  {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
+                  所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
+                </p>
+      </section>
+              <section>
+                <h4>可享福利提示</h4>
+                <p>{getBenefitPreview(selectedKnowledgePolicy)}</p>
+                <span className="official-phone-tag">
+                  {getOfficialPhone(selectedKnowledgePolicy.province)}
+                </span>
+                {selectedKnowledgePolicy.url && (
+                  <a href={selectedKnowledgePolicy.url} target="_blank" rel="noreferrer" className="policy-link-button">
+                    打开官网原文
+                  </a>
+                )}
+              </section>
+            </div>
+          )}
+        </div>
+      </section>
+      <section className={`share-modal ${qrPolicy ? 'open' : ''}`}>
+        <div className="share-panel">
+          <div className="interpret-header">
+            <h3>权益二维码分享</h3>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setQrPolicy(null)
+                setQrDataUrl('')
+                setQrError('')
+              }}
+            >
+              关闭
+            </button>
+          </div>
+          {qrPolicy && (
+            <div className="share-content">
+              <p className="interpret-policy-name">{qrPolicy.name}</p>
+              <p>二维码内容已转为第三人称描述，适合直接分享给家人或朋友。</p>
+              {qrLoading && <p>二维码生成中...</p>}
+              {qrError && <p className="empty-tip">{qrError}</p>}
+              {!qrLoading && !qrError && qrDataUrl && (
+                <>
+                  <img src={qrDataUrl} alt={`${qrPolicy.name} 分享二维码`} className="qr-image" />
+                  <p className="share-tip">扫码后可查看该权益说明文本（含背景、条件与办理建议）。</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+      <section className={`daily-brief-modal ${showDailyBrief && dailyBrief ? 'open' : ''}`}>
+        {dailyBrief && (
+          <div className="daily-brief-panel">
+            <p className="policy-label">今日政策更新</p>
+            <h3>{dailyBrief.policyCount} 条在库政策</h3>
+            <p className="policy-value">
+              日期：{dailyBrief.dateText}
+              {dailyBrief.delta !== null &&
+                (dailyBrief.delta >= 0
+                  ? `，较上次 +${dailyBrief.delta} 条`
+                  : `，较上次 ${dailyBrief.delta} 条`)}
+            </p>
+            <button type="button" onClick={() => setShowDailyBrief(false)}>
+              我知道了
+            </button>
+          </div>
+        )}
+      </section>
+
+          </>,
+          document.body,
+        )
+      : null
+
+  useEffect(() => {
+    const modalOpen =
+      Boolean(selectedPolicy) ||
+      Boolean(selectedKnowledgePolicy) ||
+      Boolean(qrPolicy) ||
+      Boolean(showDailyBrief && dailyBrief)
+    if (!modalOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [dailyBrief, qrPolicy, selectedKnowledgePolicy, selectedPolicy, showDailyBrief])
+
   if (isGovStandalone) {
   return (
       <main className="app-shell logged-shell">
@@ -2260,36 +2668,46 @@ function App() {
   }
 
   return (
+    <>
     <main className={`app-shell ${session ? 'logged-shell' : ''}`}>
-      <header className="gov-header">
-        <div className="top-strip">
-          <span className="site-name">
-            <img src={LOGO_SRC} alt="政策找你 logo" className="site-logo" />
-            政策找你 · 全国惠民政策智能匹配平台
-          </span>
-          <div className="quick-links auth-links service-meta">
-            <span>服务热线：{getOfficialPhone('全国')}</span>
-            <span>主办：全国政策服务协同平台（演示）</span>
-            <span>政务公开</span>
-            <span>政务服务</span>
-            <span>政策解读</span>
-            {session && <span className="user-pill">当前用户：{session.displayName}</span>}
-            {session && (
-              <button type="button" className="mini-btn" onClick={handleLogout}>
-                退出登录
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="brand-row">
-          <div className="brand-title-row">
-            <div className="brand-logo-row">
-              <img src={LOGO_SRC} alt="政策找你 logo" className="brand-logo" />
+      <header className={`gov-header ${session ? '' : 'guest-header'}`}>
+        {session ? (
+          <>
+            <div className="top-strip">
+              <span className="site-name">
+                <img src={LOGO_SRC} alt="政策找你 logo" className="site-logo" />
+                政策找你 · 全国惠民政策智能匹配平台
+              </span>
+              <div className="quick-links auth-links service-meta">
+                <span>服务热线：{getOfficialPhone('全国')}</span>
+                <span className="user-pill">当前用户：{session.displayName}</span>
+                <button type="button" className="mini-btn" onClick={handleLogout}>
+                  退出登录
+                </button>
+              </div>
             </div>
-            <h1>政策找你</h1>
+            <div className="brand-row">
+              <div className="brand-title-row">
+                <div className="brand-logo-row">
+                  <img src={LOGO_SRC} alt="政策找你 logo" className="brand-logo" />
+                </div>
+                <h1>政策找你</h1>
+              </div>
+              <p className="brand-description">让“本该属于你”的政策权益不再错过</p>
+            </div>
+          </>
+        ) : (
+          <div className="guest-brand-strip">
+            <div className="guest-brand-main">
+              <img src={LOGO_SRC} alt="政策找你 logo" className="brand-logo" />
+              <div>
+                <h1>政策找你</h1>
+                <p className="brand-description">让“本该属于你”的政策权益不再错过</p>
+              </div>
+            </div>
+            <span className="guest-hotline">服务热线：{getOfficialPhone('全国')}</span>
           </div>
-          <p className="brand-description">让“本该属于你”的政策权益不再错过</p>
-        </div>
+        )}
         <nav className="main-nav" aria-label="主导航">
           <button
             type="button"
@@ -2303,7 +2721,7 @@ function App() {
             className={mainTab === 'todo' ? 'active' : ''}
             onClick={() => setMainTab('todo')}
           >
-            我的代办
+            我的待办
           </button>
           <button
             type="button"
@@ -2323,24 +2741,8 @@ function App() {
 
       {!session ? (
         <section className="card login-card">
-          {showLoginPopup && (
-            <aside className="login-popover" role="status" aria-live="polite">
-              <div className="login-popover-head">
-                <strong>新功能提示</strong>
-                <button type="button" className="ghost mini-btn" onClick={() => setShowLoginPopup(false)}>
-                  关闭
-                </button>
-              </div>
-              <p>你现在可以先搜索政策，再看匹配结果；详细页支持分步办理指引与材料清单。</p>
-            </aside>
-          )}
           <div className="login-hero">
-            <div className="login-brand-block">
-              <div className="login-logo-text-only" aria-hidden="true">
-                <img src={LOGO_SRC} alt="" className="login-logo" />
-              </div>
-              <span className="login-mark">CHINA · 政策找你</span>
-            </div>
+            <span className="login-mark">CHINA · 政策找你</span>
             <h2>欢迎进入政策找你</h2>
             <p className="hint">
               智能匹配个人与企业可享权益，一次登录即可持续记录进度，减少重复填写。
@@ -3001,7 +3403,7 @@ function App() {
                               {getOfficialPhone(item.province)}
                             </span>
                             <button type="button" className="ghost" onClick={() => addPolicyToTodoFromKnowledge(item)}>
-                              加入我的代办
+                              加入我的待办
                             </button>
         <button
           type="button"
@@ -3111,7 +3513,7 @@ function App() {
                     {qrLoading && qrPolicy?.name === policy.name ? '二维码生成中...' : '导出二维码'}
                   </button>
                   <button type="button" className="ghost" onClick={() => addPolicyToTodoFromCard(policy)}>
-                    加入我的代办
+                    加入我的待办
                   </button>
                   <button type="button" className="ghost" onClick={() => addPolicyToFavoriteFromCard(policy)}>
                     加入我的收藏
@@ -3146,14 +3548,14 @@ function App() {
 
           {mainTab === 'todo' && (
             <section className="card">
-              <h2>我的代办</h2>
+              <h2>我的待办</h2>
               <p className="hint">按步骤推进政策办理，系统会告诉你下一步该做什么、该准备什么材料。</p>
               <div className="todo-overview">
-                <span>代办总数：{todoList.length}</span>
+                <span>待办总数：{todoList.length}</span>
                 <span>已完成：{todoCompletedCount}</span>
                 <span>整体进度：{todoOverallProgress}%</span>
               </div>
-              {todoList.length === 0 && <p className="empty-tip">还没有代办任务，可在政策卡片点击“加入我的代办”。</p>}
+              {todoList.length === 0 && <p className="empty-tip">还没有待办任务，可在政策卡片点击“加入我的待办”。</p>}
               <div className="todo-list">
                 {todoList.map((item) => {
                   const progress = Math.round((item.currentStep / Math.max(item.steps.length, 1)) * 100)
@@ -3207,7 +3609,7 @@ function App() {
           {mainTab === 'favorite' && (
             <section className="card">
               <h2>我的收藏</h2>
-              <p className="hint">收藏你重点关注的政策，后续可快速回看并转入代办。</p>
+              <p className="hint">收藏你重点关注的政策，后续可快速回看并转入待办。</p>
               {favoriteList.length === 0 && (
                 <p className="empty-tip">还没有收藏内容，可在政策结果或搜索结果中点击“加入我的收藏”。</p>
               )}
@@ -3232,11 +3634,11 @@ function App() {
                         benefit: item.summary,
                         applyStart: '请查看原文',
                         applyEnd: '请查看原文',
-                        reason: '由用户收藏后转入代办',
+                        reason: '由用户收藏后转入待办',
                         nextStep: '先阅读政策原文，再准备申报材料',
                         sourceUrl: item.sourceUrl,
                       })}>
-                        转入我的代办
+                        转入我的待办
                       </button>
                       {item.sourceUrl && (
                         <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
@@ -3274,393 +3676,9 @@ function App() {
         <p>主办：全国政策服务协同平台（演示） ｜ 联系电话：{getOfficialPhone('全国')}</p>
         <p>建议使用 Chrome / Edge 最新版浏览器访问本平台</p>
       </footer>
-      <section
-        className={`interpret-modal ${selectedPolicy ? 'open' : ''}`}
-        onClick={closeInterpretation}
-      >
-        <div className="interpret-panel" onClick={(event) => event.stopPropagation()}>
-          <div className="interpret-header">
-            <h3>政策解读</h3>
-            <button type="button" className="ghost" onClick={closeInterpretation}>
-              关闭
-            </button>
-          </div>
-          {selectedPolicy && (
-            <div className="interpret-body">
-              <p className="interpret-policy-name">{selectedPolicy.name}</p>
-              {interpretLoading && <p>解读生成中...</p>}
-              {interpretError && <p className="empty-tip">{interpretError}</p>}
-              {!interpretLoading && !interpretError && (
-                <>
-                  <div className="detail-quick-grid">
-                    <div className="detail-quick-item">
-                      <p className="policy-label">申请对象</p>
-                      <p className="policy-value">{selectedPolicy.targetGroup}</p>
-                    </div>
-                    <div className="detail-quick-item">
-                      <p className="policy-label">办理渠道</p>
-                      <p className="policy-value">优先线上办理；无法线上提交时前往本地政务服务窗口。</p>
-                    </div>
-                    <div className="detail-quick-item">
-                      <p className="policy-label">可享权益</p>
-                      <p className="policy-value">{selectedPolicy.benefit}</p>
-                    </div>
-                    <div className="detail-quick-item">
-                      <p className="policy-label">时间信息</p>
-                      <p className="policy-value">
-                        申报窗口：{selectedPolicy.applyStart} 至 {selectedPolicy.applyEnd}（{getPolicyStatus(selectedPolicy.applyStart, selectedPolicy.applyEnd)}）
-                      </p>
-                    </div>
-                    <div className="detail-quick-item">
-                      <p className="policy-label">官方咨询</p>
-                      <p className="policy-value">{selectedPolicy.officialPhone || getOfficialPhone(selectedProvince || profile.residence || '全国')}</p>
-                    </div>
-                  </div>
-                  <section>
-                    <h4>政策说明</h4>
-                    <p>
-                      {policyInterpretation?.summary ||
-                        buildFriendlyPolicyMessage(selectedPolicy.name, selectedPolicy.reason)}
-                    </p>
-                  </section>
-                  <section className="progress-section">
-                    <h4>资格判断结果</h4>
-                    <div className="apply-score-row">
-                      <span>当前匹配度</span>
-                      <div className="heat-bar" aria-hidden="true">
-                        <span style={{ width: `${checkScore}%` }} />
-                      </div>
-                      <strong>{checkScore}分</strong>
-                    </div>
-                    <div className="score-dial-wrap">
-                      <div
-                        className="score-dial"
-                        style={{ ['--score' as string]: `${checkScore}` }}
-                        aria-label={`当前匹配度${checkScore}分`}
-                      >
-                        <span>{checkScore}</span>
-                      </div>
-                    </div>
-                    <p className="search-hint">
-                      已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
-                    </p>
-                    <div className="eligibility-list">
-                      {eligibilityChecks.map((check) => (
-                        <article key={`interpret-${check.key}`} className={`eligibility-item ${check.status}`}>
-                          <div className="eligibility-head">
-                            <p className="policy-label">{check.label}</p>
-                            <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
-                          </div>
-                          <p className="policy-value">{check.detail}</p>
-                          {check.options && check.options.length > 0 && (
-                            <div className="quick-option-row">
-                              {check.options.map((option) => (
-                                <button
-                                  key={`interpret-${check.key}-${option}`}
-                                  type="button"
-                                  className="ghost quick-option-btn"
-                                  onClick={() => applyQuickOption(check.key, option)}
-                                >
-                                  选“{option}”
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                  <section className="progress-section">
-                    <h4>申领路径</h4>
-                    <div className="step-track">
-                      {(policyInterpretation?.checklist?.length
-                        ? policyInterpretation.checklist.map((item) => ({ title: `步骤`, desc: item }))
-                        : buildApplicationSteps(profile.identity === 'company')
-                      ).map((step, idx) => (
-                        <article key={`interpret-step-${idx}-${step.desc}`} className="step-node">
-                          <span className="step-index">{idx + 1}</span>
-                          <div>
-                            <p className="policy-label">{step.title || `步骤 ${idx + 1}`}</p>
-                            <p className="policy-value">{step.desc}</p>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                  <section>
-                    <h4>材料准备与模板</h4>
-                    <div className="material-list">
-                      {materialList.map((item) => (
-                        <article key={`interpret-${item.name}`} className="material-card">
-                          <p className="policy-label">{item.name}</p>
-                          <p className="policy-value">{item.tip}</p>
-                          <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
-                            查看办理入口
-                          </a>
-                        </article>
-                      ))}
-                    </div>
-                    <p className="template-preview">
-                      模板示例：本人/本企业拟申请《{selectedPolicy.name}》，已确认身份为“
-                      {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
-                      所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
-                    </p>
-                  </section>
-                  <section>
-                    <h4>可享福利提示</h4>
-                    <p>{selectedPolicy.benefit}</p>
-                    <span className="official-phone-tag">
-                      {selectedPolicy.officialPhone || getOfficialPhone(selectedProvince || profile.residence || '全国')}
-                    </span>
-                    {selectedPolicy.sourceUrl && (
-                      <a href={selectedPolicy.sourceUrl} target="_blank" rel="noreferrer" className="policy-link-button">
-                        打开官网原文
-                      </a>
-                    )}
-                  </section>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </section>
-      <section
-        className={`knowledge-modal ${selectedKnowledgePolicy ? 'open' : ''}`}
-        onClick={closeKnowledgePolicy}
-      >
-        <div className="knowledge-panel" onClick={(event) => event.stopPropagation()}>
-          <div className="interpret-header">
-            <h3>政策详情可视化解读</h3>
-            <button type="button" className="ghost" onClick={closeKnowledgePolicy}>
-              关闭
-            </button>
-          </div>
-          {selectedKnowledgePolicy && (
-            <div className="interpret-body">
-              <p className="interpret-policy-name">{selectedKnowledgePolicy.title}</p>
-              <div className="detail-quick-grid">
-                <div className="detail-quick-item">
-                  <p className="policy-label">申请对象</p>
-                  <p className="policy-value">
-                    {summarizeAudience(selectedKnowledgePolicy.title, profile)}
-                  </p>
-                </div>
-                <div className="detail-quick-item">
-                  <p className="policy-label">办理渠道</p>
-                  <p className="policy-value">
-                    线上政务服务网可申报；材料复杂时建议去本地政务服务中心窗口提交。
-                  </p>
-                </div>
-                <div className="detail-quick-item">
-                  <p className="policy-label">可享权益</p>
-                  <p className="policy-value">
-                    {getBenefitPreview(selectedKnowledgePolicy)}
-                  </p>
-                </div>
-                <div className="detail-quick-item">
-                  <p className="policy-label">时间信息</p>
-                  <p className="policy-value">
-                    发布日期：{selectedKnowledgePolicy.publishDate || '未知'}
-                    {selectedKnowledgePolicy.deadlineHint ? `；${selectedKnowledgePolicy.deadlineHint}` : ''}
-                  </p>
-                </div>
-                <div className="detail-quick-item">
-                  <p className="policy-label">官方咨询</p>
-                  <p className="policy-value">{getOfficialPhone(selectedKnowledgePolicy.province)}</p>
-                </div>
-              </div>
-              <section>
-                <h4>政策说明</h4>
-                <p>{buildFriendlyPolicyMessage(selectedKnowledgePolicy.title, selectedKnowledgePolicy.contentSnippet)}</p>
-              </section>
-              <section className="progress-section">
-                <h4>资格判断结果</h4>
-                <div className="apply-score-row">
-                  <span>当前匹配度</span>
-                  <div className="heat-bar" aria-hidden="true">
-                    <span style={{ width: `${checkScore}%` }} />
-                  </div>
-                  <strong>{checkScore}分</strong>
-                </div>
-                <div className="score-dial-wrap">
-                  <div
-                    className="score-dial"
-                    style={{ ['--score' as string]: `${checkScore}` }}
-                    aria-label={`当前匹配度${checkScore}分`}
-                  >
-                    <span>{checkScore}</span>
-                  </div>
-                </div>
-                <p className="search-hint">
-                  已满足 {passCount} 项，待补充 {missingCount} 项。补齐后可直接进入申报环节。
-                </p>
-                <div className="eligibility-list">
-                  {eligibilityChecks.map((check) => (
-                    <article key={check.key} className={`eligibility-item ${check.status}`}>
-                      <div className="eligibility-head">
-                        <p className="policy-label">{check.label}</p>
-                        <span className={`status-chip ${check.status}`}>{getCheckStatusText(check.status)}</span>
-                      </div>
-                      <p className="policy-value">{check.detail}</p>
-                      {check.options && check.options.length > 0 && (
-                        <div className="quick-option-row">
-                          {check.options.map((option) => (
-                            <button
-                              key={`${check.key}-${option}`}
-                              type="button"
-                              className="ghost quick-option-btn"
-                              onClick={() => applyQuickOption(check.key, option)}
-                            >
-                              选“{option}”
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              </section>
-              <section className="progress-section">
-                <h4>申领路径</h4>
-                <div className="step-track">
-                  {buildApplicationSteps(profile.identity === 'company').map((step, idx) => (
-                    <article key={step.title} className="step-node">
-                      <span className="step-index">{idx + 1}</span>
-                      <div>
-                        <p className="policy-label">{step.title}</p>
-                        <p className="policy-value">{step.desc}</p>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
-              <section>
-                <h4>材料准备与模板</h4>
-                <div className="material-list">
-                  {materialList.map((item) => (
-                    <article key={item.name} className="material-card">
-                      <p className="policy-label">{item.name}</p>
-                      <p className="policy-value">{item.tip}</p>
-                      <a href={item.url} target="_blank" rel="noreferrer" className="policy-link-button">
-                        查看办理入口
-                      </a>
-                    </article>
-                  ))}
-        </div>
-                <p className="template-preview">
-                  模板示例：本人/本企业拟申请《{selectedKnowledgePolicy.title}》，已确认身份为“
-                  {profile.identity === 'company' ? '企业/法人主体' : '个人'}”，
-                  所在地区“{selectedProvince || profile.residence || '待补充'}”，现提交申请材料并承诺信息真实有效。
-                </p>
-      </section>
-              <section>
-                <h4>可享福利提示</h4>
-                <p>{getBenefitPreview(selectedKnowledgePolicy)}</p>
-                <span className="official-phone-tag">
-                  {getOfficialPhone(selectedKnowledgePolicy.province)}
-                </span>
-                {selectedKnowledgePolicy.url && (
-                  <a href={selectedKnowledgePolicy.url} target="_blank" rel="noreferrer" className="policy-link-button">
-                    打开官网原文
-                  </a>
-                )}
-              </section>
-            </div>
-          )}
-        </div>
-      </section>
-      <section className={`share-modal ${qrPolicy ? 'open' : ''}`}>
-        <div className="share-panel">
-          <div className="interpret-header">
-            <h3>权益二维码分享</h3>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => {
-                setQrPolicy(null)
-                setQrDataUrl('')
-                setQrError('')
-              }}
-            >
-              关闭
-            </button>
-          </div>
-          {qrPolicy && (
-            <div className="share-content">
-              <p className="interpret-policy-name">{qrPolicy.name}</p>
-              <p>二维码内容已转为第三人称描述，适合直接分享给家人或朋友。</p>
-              {qrLoading && <p>二维码生成中...</p>}
-              {qrError && <p className="empty-tip">{qrError}</p>}
-              {!qrLoading && !qrError && qrDataUrl && (
-                <>
-                  <img src={qrDataUrl} alt={`${qrPolicy.name} 分享二维码`} className="qr-image" />
-                  <p className="share-tip">扫码后可查看该权益说明文本（含背景、条件与办理建议）。</p>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </section>
-      <section className={`daily-brief-modal ${showDailyBrief && dailyBrief ? 'open' : ''}`}>
-        {dailyBrief && (
-          <div className="daily-brief-panel">
-            <p className="policy-label">今日政策更新</p>
-            <h3>{dailyBrief.policyCount} 条在库政策</h3>
-            <p className="policy-value">
-              日期：{dailyBrief.dateText}
-              {dailyBrief.delta !== null &&
-                (dailyBrief.delta >= 0
-                  ? `，较上次 +${dailyBrief.delta} 条`
-                  : `，较上次 ${dailyBrief.delta} 条`)}
-            </p>
-            <button type="button" onClick={() => setShowDailyBrief(false)}>
-              我知道了
-            </button>
-          </div>
-        )}
-      </section>
-      {!isGovStandalone && session && (
-        <>
-          <button type="button" className="ai-fab" onClick={() => setChatOpen((prev) => !prev)}>
-            {chatOpen ? '收起咨询' : 'AI 问一问'}
-          </button>
-          {chatOpen && (
-            <aside className="ai-chat-panel" role="dialog" aria-label="政策AI咨询">
-              <div className="ai-chat-head">
-                <strong>政策AI咨询</strong>
-                <button type="button" className="ghost mini-btn" onClick={() => setChatOpen(false)}>
-                  关闭
-                </button>
-              </div>
-              <div className="ai-chat-body">
-                {chatMessages.map((message) => (
-                  <article key={`${message.role}-${message.createdAt}-${message.content.slice(0, 10)}`} className={`ai-msg ${message.role}`}>
-                    <p>{message.content}</p>
-                  </article>
-                ))}
-              </div>
-              <div className="ai-chat-input">
-                <textarea
-                  rows={2}
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="例如：我在合肥工作，社保一年，能申请什么补贴？"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      void sendChatMessage()
-                    }
-                  }}
-                />
-                <button type="button" onClick={() => void sendChatMessage()} disabled={chatLoading}>
-                  {chatLoading ? '发送中...' : '发送'}
-                </button>
-              </div>
-            </aside>
-          )}
-        </>
-      )}
     </main>
+    {appOverlays}
+    </>
   )
 }
 
