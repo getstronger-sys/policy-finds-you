@@ -244,6 +244,15 @@ function parseJsonFromLLM(content) {
   }
 }
 
+const PROVINCE_FROM_FILE = {
+  beijing: '北京',
+}
+
+function provinceFromKnowledgeFile(fileName) {
+  const stem = fileName.replace(/-policies\.json$/i, '')
+  return PROVINCE_FROM_FILE[stem] ?? stem
+}
+
 async function loadPolicies() {
   const now = Date.now()
   if (policyCache && now - policyCacheAt < policyCacheTtlMs) {
@@ -267,7 +276,7 @@ async function loadPolicies() {
     if (!Array.isArray(records)) {
       continue
     }
-    const province = fileName.replace(/-policies\.json$/i, '')
+    const province = provinceFromKnowledgeFile(fileName)
     for (const item of records) {
       if (!item || typeof item !== 'object') continue
       merged.push({
