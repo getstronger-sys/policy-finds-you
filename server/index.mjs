@@ -838,7 +838,7 @@ ${JSON.stringify(profile, null, 2)}
     if (!llmResponse.ok) {
       const detail = await llmResponse.text()
       res.status(502).json({
-        error: mapDeepSeekError(detail),
+        error: mapDeepSeekError(detail, llmResponse.status),
         detail: detail.slice(0, 500),
         httpStatus: llmResponse.status,
         keyHint: deepseekKeyHint(),
