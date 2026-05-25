@@ -1621,6 +1621,7 @@ function App() {
         profile: targetProfile,
         scenario: targetScenario,
         identity: targetProfile.identity,
+        selectedProvince,
       }),
     })
     const data = await readApiJson(response)
