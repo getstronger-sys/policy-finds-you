@@ -361,6 +361,9 @@ const INTENT_SYNONYMS = {
   生育: ['生育', '育儿', '二孩', '托育', '产假'],
   社保: ['社保', '社会保险', '五险'],
   公积金: ['公积金'],
+  税费: ['税费', '减税', '退税', '税收', '所得税', '加计扣除', '小微', '企业所得税'],
+  科技创新: ['科技', '研发', '创新', '高新技术', '专精特新', '科技型'],
+  融资: ['融资', '贷款', '信贷', '担保'],
 }
 
 const POLICY_INTENT_KEYWORDS = Object.keys(INTENT_SYNONYMS)
@@ -479,6 +482,8 @@ function scorePolicyRelevance(item, context) {
     if (/优化营商环境/.test(title) && titleOrSnippetHits === 0) {
       score = Math.min(score, 6)
     }
+  } else if (/高技能人才研修|义务教育入学|游泳场所|生育津贴|文物保护/.test(title) && titleOrSnippetHits === 0) {
+    score = Math.min(score, 4)
   }
 
   return {
@@ -525,6 +530,8 @@ function buildMatchContext(profile, scenario, identity, selectedProvince = '') {
     p.hukou,
     p.companyIndustry,
     p.companyStage,
+    p.employeeCount ? `员工${p.employeeCount}` : '',
+    p.annualTaxBracket ? `纳税${p.annualTaxBracket}` : '',
     p.socialSecurityMonths ? `社保${p.socialSecurityMonths}` : '',
     p.providentFundMonths ? `公积金${p.providentFundMonths}` : '',
     p.hasSecondChild ? '二孩生育' : '',

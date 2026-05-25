@@ -99,6 +99,66 @@ interface PolicyCard {
   sourceUrl?: string
   officialPhone?: string
   confidence?: number
+  matchSource?: 'rule' | 'knowledge'
+}
+
+const MATCH_LEVEL_ORDER: Record<PolicyCard['matchLevel'], number> = {
+  完全符合: 0,
+  可能符合: 1,
+  需确认: 2,
+}
+
+function isWeakAiPolicy(policy: PolicyCard) {
+  const confidence = Number(policy.confidence ?? 0)
+  const reason = String(policy.reason ?? '')
+  if (policy.matchLevel === '需确认' && confidence > 0 && confidence < 0.68) return true
+  if (/可能涉及|具体条件需确认|但具体|需进一步|仍需确认/.test(reason)) return true
+  if ((!policy.benefit || policy.benefit === '未知' || policy.benefit === '请查看政策原文') && policy.matchLevel === '需确认') {
+    return true
+  }
+  return false
+}
+
+function mergePolicyResults(baseline: PolicyCard[], aiRows: PolicyCard[]) {
+  const seen = new Set<string>()
+  const merged: PolicyCard[] = []
+
+  const push = (policy: PolicyCard) => {
+    const key = policy.sourceUrl || policy.name
+    if (seen.has(key)) return
+    seen.add(key)
+    merged.push(policy)
+  }
+
+  const strongBaseline = baseline.filter(
+    (item) => item.matchLevel === '完全符合' || item.matchLevel === '可能符合',
+  )
+  const qualityAi = aiRows.filter((item) => !isWeakAiPolicy(item))
+
+  for (const item of strongBaseline) {
+    push({ ...item, matchSource: 'rule' })
+  }
+  for (const item of qualityAi) {
+    push({ ...item, matchSource: 'knowledge' })
+  }
+  for (const item of baseline) {
+    if (merged.length >= 8) break
+    push({ ...item, matchSource: 'rule' })
+  }
+  for (const item of aiRows) {
+    if (merged.length >= 10) break
+    if (!isWeakAiPolicy(item)) {
+      push({ ...item, matchSource: 'knowledge' })
+    }
+  }
+
+  return merged
+    .sort((a, b) => {
+      const levelDiff = MATCH_LEVEL_ORDER[a.matchLevel] - MATCH_LEVEL_ORDER[b.matchLevel]
+      if (levelDiff !== 0) return levelDiff
+      return Number(b.confidence ?? 0) - Number(a.confidence ?? 0)
+    })
+    .slice(0, 10)
 }
 
 interface UserProfile {
@@ -1065,7 +1125,12 @@ function App() {
       return true
     })
   }, [profile.hasSecondChild, profile.identity, selectedScenario])
-  const displayPolicies = aiMatchedPolicies ?? matchedPolicies
+  const displayPolicies = useMemo(() => {
+    if (!aiMatchedPolicies || aiMatchedPolicies.length === 0) {
+      return matchedPolicies
+    }
+    return mergePolicyResults(matchedPolicies, aiMatchedPolicies)
+  }, [aiMatchedPolicies, matchedPolicies])
   const unlockedPolicyCount = Math.min(displayPolicies.length, 10)
   const extraDiscoverableCount = profile.birthPlace.trim() ? 0 : 2
   const unlockHintText =
@@ -1759,12 +1824,20 @@ function App() {
     setAiError('')
     try {
       const result = await requestAiMatch(profile, selectedScenario)
-      setAiMatchedPolicies(result.rows)
+      const qualityAiRows = result.rows.filter((item) => !isWeakAiPolicy(item))
+      setAiMatchedPolicies(qualityAiRows)
       setAiSourceCount(result.sourceCount)
-      if (result.rows.length === 0) {
+      const mergedPreview = mergePolicyResults(matchedPolicies, qualityAiRows.length > 0 ? qualityAiRows : result.rows)
+      const keptRuleCount = mergedPreview.filter((item) => item.matchSource === 'rule').length
+      if (qualityAiRows.length === 0) {
         setAiError(
           result.qualityNote ||
-            '未找到与您画像高度相关的政策，建议补充落户/就业/补贴等具体需求后再试，或使用上方关键词搜索。',
+            '知识库未找到更优政策，已保留上方规则精选结果。建议补充更具体需求后重试，或使用关键词搜索。',
+        )
+      } else if (keptRuleCount > 0) {
+        setAiError('')
+        setSearchHint(
+          `已合并 ${qualityAiRows.length} 条知识库政策，并保留 ${keptRuleCount} 条规则精选（含「完全符合」项）。`,
         )
       }
     } catch (error) {
@@ -1772,6 +1845,13 @@ function App() {
     } finally {
       setAiLoading(false)
     }
+  }
+
+  const clearAiMatch = () => {
+    setAiMatchedPolicies(null)
+    setAiSourceCount(null)
+    setAiError('')
+    setSearchHint('')
   }
 
   const provinceMatchesSelection = (policyProvince: string, provinceHint: string) => {
@@ -3561,11 +3641,21 @@ function App() {
                     disabled={aiLoading}
                     className={aiLoading ? 'is-loading' : ''}
                   >
-                    {aiLoading ? 'AI 匹配中...' : '使用 DeepSeek 智能匹配'}
+                    {aiLoading ? '知识库匹配中...' : '从知识库深度匹配'}
                   </button>
-                  {aiSourceCount !== null && <span>已基于 {aiSourceCount} 条本地政策知识匹配</span>}
-                  {aiMatchedPolicies && <span className="ai-badge">当前展示 AI 结果</span>}
+                  {aiMatchedPolicies && (
+                    <button type="button" className="ghost" onClick={clearAiMatch}>
+                      恢复规则精选
+                    </button>
+                  )}
+                  {aiSourceCount !== null && <span>已检索 {aiSourceCount} 条本地政策</span>}
+                  {aiMatchedPolicies && <span className="ai-badge">已合并知识库 + 规则精选</span>}
                 </div>
+                {aiMatchedPolicies && (
+                  <p className="hint">
+                    规则精选为按画像快速筛选的示范政策；深度匹配会从 {aiSourceCount ?? 0} 条知识库补充，并保留「完全符合」项。
+                  </p>
+                )}
                 {aiError && <p className="empty-tip">{aiError}</p>}
                 <div className="result-list">
                   {displayPolicies.length === 0 && aiMatchedPolicies && (
@@ -3579,7 +3669,11 @@ function App() {
                     >
                 <div className="result-head">
                   <h3>{policy.name}</h3>
-                  <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
+                  <div className="result-tags">
+                    <span className={`tag ${policy.matchLevel}`}>{policy.matchLevel}</span>
+                    {policy.matchSource === 'rule' && <span className="tag rule-tag">规则精选</span>}
+                    {policy.matchSource === 'knowledge' && <span className="tag knowledge-tag">知识库</span>}
+                  </div>
                 </div>
                 <p className="policy-alarm">{getPolicyAlarmText(policy.applyStart, policy.applyEnd)}</p>
                 <div className="policy-meta">

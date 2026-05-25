@@ -1311,6 +1311,23 @@ button.ghost {
   color: #4f3925;
 }
 
+.result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.tag.rule-tag {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.tag.knowledge-tag {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
 .tag {
   padding: 4px 10px;
   border-radius: 2px;
