@@ -1625,9 +1625,17 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ policy, profile }),
       })
-      const data = await readApiJson(response)
+      let data: Record<string, any> = {}
+      const raw = await response.text()
+      if (raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          throw new Error('政策解读服务返回异常，请确认线上已完成最新部署。')
+        }
+      }
       if (!response.ok) {
-        throw new Error(data?.error ?? '政策解读生成失败')
+        throw new Error(typeof data?.error === 'string' ? data.error : '政策解读生成失败')
       }
       const interpretation = data?.interpretation ?? null
       if (!interpretation || typeof interpretation !== 'object') {

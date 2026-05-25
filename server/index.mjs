@@ -278,6 +278,27 @@ function buildPromptPayload({ profile, scenario, identity, policies }) {
   }
 }
 
+function mapDeepSeekError(detailText) {
+  const detail = String(detailText || '')
+  try {
+    const parsed = JSON.parse(detail)
+    const message = String(parsed?.error?.message || parsed?.message || '')
+    if (message.includes('Insufficient Balance') || message.includes('余额')) {
+      return 'DeepSeek 账户余额不足，请在 Render 环境变量更新有效 API Key 并重新部署。'
+    }
+    if (message.includes('Authentication') || message.includes('invalid')) {
+      return 'DeepSeek API Key 无效，请检查 Render 中 DEEPSEEK_API_KEY 是否正确。'
+    }
+    if (message) return message
+  } catch {
+    // ignore parse errors
+  }
+  if (detail.includes('Insufficient Balance')) {
+    return 'DeepSeek 账户余额不足，请在 Render 环境变量更新有效 API Key 并重新部署。'
+  }
+  return 'DeepSeek 政策解读调用失败，请稍后重试。'
+}
+
 function buildLocalInterpretation(policy, profile) {
   const status =
     policy.applyStart && policy.applyEnd
@@ -699,15 +720,14 @@ app.post('/api/policy-interpret', async (req, res) => {
     }
 
     if (!deepseekApiKey) {
-      res.json({
-        interpretation: buildLocalInterpretation(policy, profile),
-        mode: 'fallback',
+      res.status(400).json({
+        error: '未配置 DEEPSEEK_API_KEY，请在 Render 环境变量设置后重新部署。',
       })
       return
     }
 
     const systemPrompt =
-      '你是政策解读助手，请将政策内容转写为通俗、可执行的办理说明。返回严格 JSON。'
+      '你是政策解读助手，请将政策内容转写为通俗、可执行的办理说明。只返回 JSON 对象，不要输出其它文字。'
     const userPrompt = `
 请解读以下政策，输出 JSON 字段：
 {
@@ -734,6 +754,7 @@ ${JSON.stringify(profile, null, 2)}
       body: JSON.stringify({
         model: deepseekModel,
         temperature: 0.2,
+        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -744,7 +765,7 @@ ${JSON.stringify(profile, null, 2)}
     if (!llmResponse.ok) {
       const detail = await llmResponse.text()
       res.status(502).json({
-        error: 'DeepSeek policy interpretation failed.',
+        error: mapDeepSeekError(detail),
         detail: detail.slice(0, 500),
       })
       return
@@ -755,7 +776,7 @@ ${JSON.stringify(profile, null, 2)}
     const parsed = parseJsonFromLLM(content)
     if (!parsed || typeof parsed !== 'object') {
       res.status(502).json({
-        error: 'Failed to parse policy interpretation JSON.',
+        error: '政策解读结果解析失败，请重试。',
         detail: content.slice(0, 500),
       })
       return
