@@ -485,17 +485,73 @@ function getOfficialPhone(provinceHint?: string) {
   return `${provinceHint}政务咨询（请查看政策原文联系电话）`
 }
 
+type LocalIdentityMode = '' | 'local_hukou' | 'local_resident' | 'migrant'
+
+function getLocalIdentityMode(profile: UserProfile): LocalIdentityMode {
+  const residence = profile.residence || ''
+  if (residence.includes('户籍')) return 'local_hukou'
+  if (residence.includes('常住')) return 'local_resident'
+  if (residence === '异地就业') return 'migrant'
+  return ''
+}
+
+function buildProfileFromLocalIdentity(
+  mode: LocalIdentityMode,
+  province: string,
+  prev: UserProfile,
+): Partial<UserProfile> {
+  if (!mode) {
+    return { residence: '', hukou: '', workPlace: province || prev.workPlace }
+  }
+  if (mode === 'local_hukou') {
+    return { residence: `${province}户籍`, hukou: province, workPlace: province }
+  }
+  if (mode === 'local_resident') {
+    return { residence: `${province}常住`, hukou: prev.hukou || '', workPlace: province }
+  }
+  return { residence: '异地就业', hukou: prev.hukou || '', workPlace: prev.workPlace || province }
+}
+
+function getSpecialIdentityLabel(profile: UserProfile) {
+  if (profile.hasSecondChild || profile.familyTag === '二孩家庭') return '二孩家庭'
+  if (profile.disabilityStatus === '是') return '残疾人家庭'
+  if (profile.veteranStatus === '是') return '退役军人'
+  if (profile.lowIncomeStatus === '是') return '低保/困难群体'
+  return ''
+}
+
+function applySpecialIdentity(profile: UserProfile, value: string): UserProfile {
+  const cleared = {
+    ...profile,
+    hasSecondChild: false,
+    childrenCount: '',
+    familyTag: '',
+    disabilityStatus: '',
+    veteranStatus: '',
+    lowIncomeStatus: '',
+  }
+  if (!value || value === '无') return cleared
+  if (value === '二孩家庭') {
+    return { ...cleared, hasSecondChild: true, childrenCount: '2', familyTag: '二孩家庭' }
+  }
+  if (value === '残疾人家庭') return { ...cleared, disabilityStatus: '是', familyTag: value }
+  if (value === '退役军人') return { ...cleared, veteranStatus: '是', familyTag: value }
+  if (value === '低保/困难群体') return { ...cleared, lowIncomeStatus: '是', familyTag: value }
+  return cleared
+}
+
 const citizenProfileSamples = [
   {
     id: 'mother',
     label: '二孩购房',
     profilePatch: {
       age: '32',
-      gender: '女',
-      childrenCount: '2',
+      residence: '本省户籍',
+      hukou: '本省',
+      workPlace: '本省',
       hasSecondChild: true,
+      childrenCount: '2',
       employmentStatus: '在职',
-      housingNeed: '购房',
       policyNeed: '生育/育儿',
       socialSecurityMonths: '24个月',
       familyTag: '二孩家庭',
@@ -1072,20 +1128,17 @@ function App() {
   const profileTags = useMemo(() => {
     const tags: string[] = []
     if (profile.identity === 'citizen') {
+      if (selectedProvince) tags.push(selectedProvince)
       if (profile.residence) tags.push(profile.residence)
+      if (profile.residence === '异地就业' && profile.workPlace && profile.workPlace !== selectedProvince) {
+        tags.push(`工作在${profile.workPlace}`)
+      }
       if (profile.age) tags.push(`${profile.age}岁`)
-      if (profile.gender) tags.push(profile.gender)
-      if (profile.childrenCount) tags.push(`子女${profile.childrenCount}人`)
       if (profile.employmentStatus) tags.push(profile.employmentStatus)
-      if (profile.housingNeed) tags.push(profile.housingNeed)
       if (profile.policyNeed) tags.push(profile.policyNeed)
       if (profile.socialSecurityMonths) tags.push(`社保${profile.socialSecurityMonths}`)
-      if (profile.providentFundMonths) tags.push(`公积金${profile.providentFundMonths}`)
-      if (profile.familyTag) tags.push(profile.familyTag)
-      if (profile.lowIncomeStatus === '是') tags.push('低保/困难群体')
-      if (profile.disabilityStatus === '是') tags.push('残疾人家庭')
-      if (profile.veteranStatus === '是') tags.push('退役军人')
-      if (profile.hasSecondChild) tags.push('二孩家庭')
+      const specialIdentity = getSpecialIdentityLabel(profile)
+      if (specialIdentity) tags.push(specialIdentity)
     } else {
       if (profile.workPlace) tags.push(profile.workPlace)
       if (profile.companyIndustry) tags.push(profile.companyIndustry)
@@ -1096,7 +1149,7 @@ function App() {
       if (profile.policyNeed) tags.push(profile.policyNeed)
     }
     return Array.from(new Set(tags)).slice(0, 14)
-  }, [profile])
+  }, [profile, selectedProvince])
 
   const resetProfileFields = () => {
     clearStructuredProfileForNaturalLanguage(false)
@@ -1225,6 +1278,9 @@ function App() {
     if (text.includes('低保')) next.lowIncomeStatus = '是'
     if (text.includes('残疾')) next.disabilityStatus = '是'
     if (text.includes('退役')) next.veteranStatus = '是'
+    if (text.includes('落户') || text.includes('人才引进') || text.includes('户口')) {
+      next.policyNeed = '落户/人才引进'
+    }
     if (text.includes('生育') || text.includes('育儿')) next.policyNeed = '生育/育儿'
     if (text.includes('就业')) next.policyNeed = '毕业生就业'
     if (text.includes('医疗')) next.policyNeed = '医疗救助'
@@ -1236,13 +1292,21 @@ function App() {
   const applyCitizenSample = (sampleId: string) => {
     const sample = citizenProfileSamples.find((item) => item.id === sampleId)
     if (!sample) return
-    setProfile((prev) => ({
-      ...prev,
-      identity: 'citizen',
-      residence: prev.residence || selectedProvince || '',
-      workPlace: prev.workPlace || selectedProvince || '',
-      ...sample.profilePatch,
-    }))
+    const province = selectedProvince || '当地'
+    setProfile((prev) => {
+      const patch = { ...sample.profilePatch }
+      if (typeof patch.residence === 'string') {
+        patch.residence = patch.residence.replace('本省', province)
+      }
+      if (patch.hukou === '本省') patch.hukou = province
+      if (patch.workPlace === '本省') patch.workPlace = province
+      return {
+        ...prev,
+        identity: 'citizen',
+        ...patch,
+        workPlace: patch.workPlace || province,
+      }
+    })
     setCitizenInputMode('structured')
     setSelectedScenario(sample.scenario)
   }
@@ -1252,45 +1316,82 @@ function App() {
   const citizenQaQuestions = useMemo(
     () => [
       {
-        key: 'residence' as keyof UserProfile,
-        label: '常住地区',
+        id: 'localIdentity',
+        label: `您在${selectedProvince || '当地'}的身份`,
         type: 'select' as const,
-        options: ['', `${selectedProvince || '本省'}常住`, `${selectedProvince || '本省'}户籍`, '异地就业'],
+        options: [
+          { value: '', label: '请选择' },
+          { value: 'local_hukou', label: `${selectedProvince || '当地'}户籍` },
+          { value: 'local_resident', label: `${selectedProvince || '当地'}常住（非户籍）` },
+          { value: 'migrant', label: `外地来${selectedProvince || '当地'}就业/落户` },
+        ],
       },
       {
-        key: 'age' as keyof UserProfile,
+        id: 'age',
         label: '年龄',
         type: 'input' as const,
         placeholder: '例如 35',
       },
       {
-        key: 'employmentStatus' as keyof UserProfile,
+        id: 'employmentStatus',
         label: '就业状况',
         type: 'select' as const,
-        options: ['', '在职', '待业', '创业', '退休'],
+        options: [
+          { value: '', label: '请选择' },
+          { value: '在职', label: '在职' },
+          { value: '待业', label: '待业' },
+          { value: '创业', label: '创业' },
+          { value: '退休', label: '退休' },
+        ],
       },
       {
-        key: 'annualIncome' as keyof UserProfile,
-        label: '月收入（元）/年收入区间',
-        type: 'input' as const,
-        placeholder: '例如 月收入8000 或 年收入10-20万',
-      },
-      {
-        key: 'policyNeed' as keyof UserProfile,
-        label: '重点政策需求',
+        id: 'policyNeed',
+        label: '最想申请的政策',
         type: 'select' as const,
-        options: ['', '生育/育儿', '社保补贴', '毕业生就业', '创业补贴', '医疗救助', '低保/社会救助'],
+        options: [
+          { value: '', label: '请选择' },
+          { value: '落户/人才引进', label: '落户 / 人才引进' },
+          { value: '毕业生就业', label: '就业 / 毕业生' },
+          { value: '创业补贴', label: '创业扶持' },
+          { value: '生育/育儿', label: '生育 / 育儿' },
+          { value: '公租房/租金补贴', label: '租房 / 住房补贴' },
+          { value: '社保补贴', label: '社保相关' },
+          { value: '医疗救助', label: '医疗救助' },
+          { value: '低保/社会救助', label: '低保 / 社会救助' },
+        ],
       },
       {
-        key: 'familyTag' as keyof UserProfile,
-        label: '特殊身份（可多选可写）',
-        type: 'input' as const,
-        placeholder: '例如 二孩家庭 / 残疾人家庭 / 退役军人',
+        id: 'socialSecurityMonths',
+        label: '社保已连续缴纳',
+        type: 'select' as const,
+        options: [
+          { value: '', label: '请选择' },
+          { value: '6个月', label: '6个月' },
+          { value: '12个月', label: '12个月' },
+          { value: '24个月', label: '24个月' },
+          { value: '36个月以上', label: '36个月以上' },
+        ],
       },
     ],
     [selectedProvince],
   )
   const currentQaQuestion = citizenQaQuestions[Math.min(qaIndex, citizenQaQuestions.length - 1)]
+
+  const getQaQuestionValue = (question: (typeof citizenQaQuestions)[number]) => {
+    if (question.id === 'localIdentity') return getLocalIdentityMode(profile)
+    return String(profile[question.id as keyof UserProfile] ?? '')
+  }
+
+  const handleQaQuestionChange = (question: (typeof citizenQaQuestions)[number], value: string) => {
+    if (question.id === 'localIdentity') {
+      setProfile((prev) => ({
+        ...prev,
+        ...buildProfileFromLocalIdentity(value as LocalIdentityMode, selectedProvince, prev),
+      }))
+      return
+    }
+    updateProfileField(question.id as keyof UserProfile, value as UserProfile[keyof UserProfile])
+  }
 
   const handleNaturalLanguageTextChange = (text: string) => {
     setProfile((prev) => createBlankProfileForNaturalLanguage(prev, text))
@@ -1374,9 +1475,9 @@ function App() {
     }
     setProfile((prev) => ({
       ...prev,
-      hukou: prev.hukou || selectedProvince,
-      residence: selectedProvince,
-      workPlace: prev.workPlace || selectedProvince,
+      hukou: '',
+      residence: '',
+      workPlace: selectedProvince,
     }))
     setStep('profile')
   }
@@ -3025,30 +3126,42 @@ function App() {
                 )}
                 {citizenInputMode === 'structured' && (
                   <>
+                <p className="full-row hint">
+                  您已在地图选择 <strong>{selectedProvince || '目标地区'}</strong>，下面只需补充 6 项关键信息（地区不再重复填写）。
+                </p>
                 <label>
-                  户籍/常住地类型
+                  我在本地的身份
                   <select
-                    value={profile.residence}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, residence: event.target.value }))}
+                    value={getLocalIdentityMode(profile)}
+                    onChange={(event) =>
+                      setProfile((prev) => ({
+                        ...prev,
+                        ...buildProfileFromLocalIdentity(
+                          event.target.value as LocalIdentityMode,
+                          selectedProvince,
+                          prev,
+                        ),
+                      }))
+                    }
                   >
-                    <option value="">未填写</option>
-                    <option value={`${selectedProvince || '本省'}户籍`}>{selectedProvince || '本省'}户籍</option>
-                    <option value={`${selectedProvince || '本省'}常住`}>{selectedProvince || '本省'}常住</option>
-                    <option value="异地就业">异地就业</option>
+                    <option value="">请选择</option>
+                    <option value="local_hukou">{selectedProvince || '当地'}户籍</option>
+                    <option value="local_resident">{selectedProvince || '当地'}常住（非户籍）</option>
+                    <option value="migrant">外地来{selectedProvince || '当地'}就业 / 落户</option>
                   </select>
                 </label>
-                <label>
-                  性别
-                  <select
-                    value={profile.gender}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, gender: event.target.value }))}
-                  >
-                    <option value="">未填写</option>
-                    <option value="女">女</option>
-                    <option value="男">男</option>
-                    <option value="其他">其他</option>
-                  </select>
-                </label>
+                {getLocalIdentityMode(profile) === 'migrant' && (
+                  <label>
+                    当前工作城市
+                    <input
+                      value={profile.workPlace}
+                      onChange={(event) =>
+                        setProfile((prev) => ({ ...prev, workPlace: event.target.value }))
+                      }
+                      placeholder={`例如 ${selectedProvince || '北京'}市`}
+                    />
+                  </label>
+                )}
                 <label>
                   年龄
                   <input
@@ -3058,43 +3171,6 @@ function App() {
                   />
                 </label>
                 <label>
-                  子女数量
-                  <input
-                    value={profile.childrenCount}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, childrenCount: event.target.value }))}
-                    placeholder="例如 2"
-                  />
-                </label>
-                <label>
-                  婚姻状态
-                  <select
-                    value={profile.maritalStatus}
-                    onChange={(event) =>
-                      setProfile((prev) => ({ ...prev, maritalStatus: event.target.value }))
-                    }
-                  >
-                    <option value="">未填写</option>
-                    <option value="未婚">未婚</option>
-                    <option value="已婚">已婚</option>
-                    <option value="离异">离异</option>
-                  </select>
-                </label>
-                <label>
-                  学历
-                  <select
-                    value={profile.educationLevel}
-                    onChange={(event) =>
-                      setProfile((prev) => ({ ...prev, educationLevel: event.target.value }))
-                    }
-                  >
-                    <option value="">未填写</option>
-                    <option value="高中及以下">高中及以下</option>
-                    <option value="专科">专科</option>
-                    <option value="本科">本科</option>
-                    <option value="硕士及以上">硕士及以上</option>
-                  </select>
-                </label>
-                <label>
                   就业状态
                   <select
                     value={profile.employmentStatus}
@@ -3102,7 +3178,7 @@ function App() {
                       setProfile((prev) => ({ ...prev, employmentStatus: event.target.value }))
                     }
                   >
-                    <option value="">未填写</option>
+                    <option value="">请选择</option>
                     <option value="在职">在职</option>
                     <option value="待业">待业</option>
                     <option value="创业">创业</option>
@@ -3110,67 +3186,31 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  购房/租房需求
-                  <select
-                    value={profile.housingNeed}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, housingNeed: event.target.value }))}
-                  >
-                    <option value="">未填写</option>
-                    <option value="购房">购房</option>
-                    <option value="租房">租房</option>
-                    <option value="暂无">暂无</option>
-                  </select>
-                </label>
-                <label>
-                  重点政策需求
+                  最想申请的政策
                   <select
                     value={profile.policyNeed}
                     onChange={(event) => setProfile((prev) => ({ ...prev, policyNeed: event.target.value }))}
                   >
-                    <option value="">未填写</option>
-                    <option value="生育/育儿">生育/育儿</option>
-                    <option value="社保补贴">社保补贴</option>
-                    <option value="毕业生就业">毕业生就业</option>
-                    <option value="创业补贴">创业补贴</option>
+                    <option value="">请选择</option>
+                    <option value="落户/人才引进">落户 / 人才引进</option>
+                    <option value="毕业生就业">就业 / 毕业生</option>
+                    <option value="创业补贴">创业扶持</option>
+                    <option value="生育/育儿">生育 / 育儿</option>
+                    <option value="公租房/租金补贴">租房 / 住房补贴</option>
+                    <option value="社保补贴">社保相关</option>
                     <option value="医疗救助">医疗救助</option>
-                    <option value="低保/社会救助">低保/社会救助</option>
-                    <option value="养老服务补贴">养老服务补贴</option>
-                    <option value="残疾人补贴">残疾人补贴</option>
-                    <option value="公租房/租金补贴">公租房/租金补贴</option>
+                    <option value="低保/社会救助">低保 / 社会救助</option>
                   </select>
                 </label>
                 <label>
-                  出生地
-                  <input
-                    value={profile.birthPlace}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, birthPlace: event.target.value }))}
-                    placeholder="例如 湖北省武汉市"
-                  />
-                </label>
-                <label>
-                  户籍地
-                  <input
-                    value={profile.hukou}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, hukou: event.target.value }))}
-                  />
-                </label>
-                <label>
-                  工作地
-                  <input
-                    value={profile.workPlace}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, workPlace: event.target.value }))}
-                    placeholder="例如 上海市浦东新区"
-                  />
-                </label>
-                <label>
-                  社保连续缴纳
+                  社保已连续缴纳
                   <select
                     value={profile.socialSecurityMonths}
                     onChange={(event) =>
                       setProfile((prev) => ({ ...prev, socialSecurityMonths: event.target.value }))
                     }
                   >
-                    <option value="">未填写</option>
+                    <option value="">请选择</option>
                     <option value="6个月">6个月</option>
                     <option value="12个月">12个月</option>
                     <option value="24个月">24个月</option>
@@ -3178,72 +3218,19 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  公积金连续缴纳
+                  特殊身份（选填）
                   <select
-                    value={profile.providentFundMonths}
+                    value={getSpecialIdentityLabel(profile)}
                     onChange={(event) =>
-                      setProfile((prev) => ({ ...prev, providentFundMonths: event.target.value }))
+                      setProfile((prev) => applySpecialIdentity(prev, event.target.value))
                     }
                   >
-                    <option value="">未填写</option>
-                    <option value="6个月">6个月</option>
-                    <option value="12个月">12个月</option>
-                    <option value="24个月">24个月</option>
-                    <option value="36个月以上">36个月以上</option>
+                    <option value="">无</option>
+                    <option value="二孩家庭">二孩家庭</option>
+                    <option value="残疾人家庭">残疾人家庭</option>
+                    <option value="退役军人">退役军人</option>
+                    <option value="低保/困难群体">低保 / 困难群体</option>
                   </select>
-                </label>
-                <label>
-                  家庭标签
-                  <input
-                    value={profile.familyTag}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, familyTag: event.target.value }))}
-                    placeholder="例如 赡养老人 / 单亲家庭"
-                  />
-                </label>
-                <label>
-                  是否残疾人家庭
-                  <select
-                    value={profile.disabilityStatus}
-                    onChange={(event) =>
-                      setProfile((prev) => ({ ...prev, disabilityStatus: event.target.value }))
-                    }
-                  >
-                    <option value="">未填写</option>
-                    <option value="是">是</option>
-                    <option value="否">否</option>
-                  </select>
-                </label>
-                <label>
-                  是否退役军人
-                  <select
-                    value={profile.veteranStatus}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, veteranStatus: event.target.value }))}
-                  >
-                    <option value="">未填写</option>
-                    <option value="是">是</option>
-                    <option value="否">否</option>
-                  </select>
-                </label>
-                <label>
-                  是否低保/困难群体
-                  <select
-                    value={profile.lowIncomeStatus}
-                    onChange={(event) => setProfile((prev) => ({ ...prev, lowIncomeStatus: event.target.value }))}
-                  >
-                    <option value="">未填写</option>
-                    <option value="是">是</option>
-                    <option value="否">否</option>
-                  </select>
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={profile.hasSecondChild}
-                    onChange={(event) =>
-                      setProfile((prev) => ({ ...prev, hasSecondChild: event.target.checked }))
-                    }
-                  />
-                  是否有二孩
                 </label>
                   </>
                 )}
@@ -3293,23 +3280,19 @@ function App() {
                     <p className="scene-title">{currentQaQuestion.label}</p>
                     {currentQaQuestion.type === 'select' ? (
                       <select
-                        value={(profile[currentQaQuestion.key] as string) || ''}
-                        onChange={(event) =>
-                          updateProfileField(currentQaQuestion.key, event.target.value as any)
-                        }
+                        value={getQaQuestionValue(currentQaQuestion)}
+                        onChange={(event) => handleQaQuestionChange(currentQaQuestion, event.target.value)}
                       >
                         {(currentQaQuestion.options ?? []).map((option) => (
-                          <option key={`${currentQaQuestion.key}-${option || 'empty'}`} value={option}>
-                            {option || '请选择'}
+                          <option key={`${currentQaQuestion.id}-${option.value || 'empty'}`} value={option.value}>
+                            {option.label}
                           </option>
                         ))}
                       </select>
                     ) : (
                       <input
-                        value={(profile[currentQaQuestion.key] as string) || ''}
-                        onChange={(event) =>
-                          updateProfileField(currentQaQuestion.key, event.target.value as any)
-                        }
+                        value={getQaQuestionValue(currentQaQuestion)}
+                        onChange={(event) => handleQaQuestionChange(currentQaQuestion, event.target.value)}
                         placeholder={currentQaQuestion.placeholder || '请输入'}
                       />
                     )}
