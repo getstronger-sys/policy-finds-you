@@ -304,13 +304,13 @@ function policySearchScore(item, query) {
   const content = String(item.content ?? '')
   const province = String(item.province ?? '')
   const haystack = `${title}\n${snippet}\n${content}\n${province}`.toLowerCase()
-  const normalized = query.toLowerCase()
+  const normalized = query.toLowerCase().replace(/([^\s,，。;；、]+市)/g, '$1 ').trim()
   const tokens = normalized
     .split(/[\s,，。;；、]+/)
     .map((token) => token.trim())
-    .filter(Boolean)
+    .filter((token) => token.length >= 2)
 
-  const keywordList = tokens.length > 0 ? tokens : [normalized]
+  const keywordList = tokens.length > 0 ? tokens : [query.toLowerCase().trim()].filter(Boolean)
   let score = 0
   for (const token of keywordList) {
     if (title.toLowerCase().includes(token)) score += 6
@@ -340,6 +340,14 @@ const PROVINCE_ALIASES = {
 function normalizeProvinceLabel(value) {
   const token = normalizeProvinceToken(value)
   return PROVINCE_ALIASES[token] ?? String(value ?? '').replace(/市$/g, '').trim()
+}
+
+function provinceMatchesFilter(itemProvince, filterProvince) {
+  if (!filterProvince) return true
+  const item = normalizeProvinceToken(normalizeProvinceLabel(itemProvince))
+  const filter = normalizeProvinceToken(normalizeProvinceLabel(filterProvince))
+  if (!item || !filter) return false
+  return item.includes(filter) || filter.includes(item)
 }
 
 const INTENT_SYNONYMS = {
@@ -1063,7 +1071,7 @@ app.get('/api/policy-search', async (req, res) => {
     const policies = await loadPolicies()
     let filtered = policies
     if (province) {
-      filtered = filtered.filter((item) => String(item.province ?? '').includes(province))
+      filtered = filtered.filter((item) => provinceMatchesFilter(item.province, province))
     }
 
     if (query) {

@@ -1074,9 +1074,10 @@ function App() {
       : `你已解锁 ${unlockedPolicyCount}/10 项专属政策`
   const guessedKeywords = useMemo(() => {
     const keywords: string[] = []
-    if (selectedProvince) {
-      keywords.push(`${selectedProvince} 补贴`)
-      keywords.push(`${selectedProvince} 人才`)
+    const provinceLabel = normalizeProvinceKey(selectedProvince)
+    if (provinceLabel) {
+      keywords.push(`${provinceLabel}补贴`)
+      keywords.push(`${provinceLabel}人才`)
     }
     if (profile.identity === 'citizen') {
       keywords.push('就业创业支持')
@@ -1773,6 +1774,13 @@ function App() {
     }
   }
 
+  const provinceMatchesSelection = (policyProvince: string, provinceHint: string) => {
+    const item = normalizeProvinceKey(policyProvince)
+    const selected = normalizeProvinceKey(provinceHint)
+    if (!item || !selected) return false
+    return item.includes(selected) || selected.includes(item)
+  }
+
   const runPolicySearch = async (keyword?: string) => {
     const query = (keyword ?? searchQuery).trim()
     if (!query) {
@@ -1786,9 +1794,10 @@ function App() {
     setHasSearched(true)
     setSearchQuery(query)
     try {
+      const provinceForSearch = normalizeProvinceKey(selectedProvince) || selectedProvince
       const params = new URLSearchParams({ q: query, limit: '10' })
-      if (selectedProvince) {
-        params.set('province', selectedProvince)
+      if (provinceForSearch) {
+        params.set('province', provinceForSearch)
       }
       const apiUrl = buildApiUrl(`/api/policy-search?${params.toString()}`)
       const response = await fetch(apiUrl)
@@ -1797,19 +1806,32 @@ function App() {
         throw new Error(data?.error ?? '政策搜索失败')
       }
       let rows: KnowledgePolicy[] = Array.isArray(data?.rows) ? data.rows : []
-      if (rows.length === 0 && selectedProvince) {
+      const localHitCount = provinceForSearch
+        ? rows.filter((item) => provinceMatchesSelection(item.province, provinceForSearch)).length
+        : rows.length
+
+      if (rows.length > 0 && provinceForSearch) {
+        setSearchHint(`在「${selectedProvince || provinceForSearch}」找到 ${localHitCount || rows.length} 条相关政策。`)
+      } else if (rows.length === 0 && provinceForSearch) {
         const globalParams = new URLSearchParams({ q: query, limit: '10' })
         const globalApiUrl = buildApiUrl(`/api/policy-search?${globalParams.toString()}`)
         const globalResponse = await fetch(globalApiUrl)
         const globalData = await readApiJson(globalResponse)
         if (globalResponse.ok) {
           rows = Array.isArray(globalData?.rows) ? globalData.rows : []
-          if (rows.length > 0) {
-            setSearchHint(`在“${selectedProvince}”未命中，已为你展示全国范围的相关政策。`)
+          const fallbackLocalCount = rows.filter((item) =>
+            provinceMatchesSelection(item.province, provinceForSearch),
+          ).length
+          if (rows.length > 0 && fallbackLocalCount > 0) {
+            setSearchHint(`在「${selectedProvince || provinceForSearch}」找到 ${fallbackLocalCount} 条相关政策。`)
+          } else if (rows.length > 0) {
+            setSearchHint('本地暂无完全匹配，已为你展示全国范围的相关政策。')
           } else {
-            setSearchHint(`在“${selectedProvince}”及全国范围都未命中，请尝试更短关键词。`)
+            setSearchHint('暂未找到相关政策，请尝试更短关键词，如「人才」「落户」「补贴」。')
           }
         }
+      } else if (rows.length > 0) {
+        setSearchHint(`共找到 ${rows.length} 条相关政策。`)
       }
       setSearchResults(rows)
     } catch (error) {
